@@ -174,8 +174,9 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   // Node Resizing
   const startResizeNode = (e, node) => {
+    if (isSpacePressed) return;
     e.stopPropagation();
-    if (drawingConnection || isSpacePressed) return;
+    if (drawingConnection) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
@@ -195,8 +196,9 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   // Node Dragging
   const startDragNode = (e, node) => {
+    if (isSpacePressed) return;
     e.stopPropagation();
-    if (drawingConnection || isSpacePressed || resizingNode) return;
+    if (drawingConnection || resizingNode) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
@@ -224,8 +226,8 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   // Connection Drawing
   const startConnection = (e, node, handlePos) => {
-    e.stopPropagation();
     if (isSpacePressed) return;
+    e.stopPropagation();
     
     const w = node.width || 96;
     const h = node.height || 96;
@@ -256,6 +258,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
   const handleCanvasMouseDown = (e) => {
     if (isSpacePressed) {
       setIsPanning(true);
+      e.preventDefault();
     } else {
       const rect = canvasRef.current.getBoundingClientRect();
       const localX = (e.clientX - rect.left - pan.x) / zoom;
@@ -653,17 +656,20 @@ const ProjectWorkspace = ({ project, onBack }) => {
                 
                 {/* Text Input */}
                 <div className="relative z-11 flex items-center justify-center w-full h-full pointer-events-none">
-                  <div className="grid w-full pointer-events-auto">
-                    <div className="col-start-1 row-start-1 invisible whitespace-pre-wrap break-words text-center text-sm font-medium px-1">
+                  <div className="grid w-full min-w-0 pointer-events-auto">
+                    <div className="col-start-1 row-start-1 invisible whitespace-pre-wrap break-words text-center text-sm font-medium px-1 min-w-0">
                       {node.text || 'Type...'}
                       {' '}
                     </div>
                     <textarea
                       value={node.text}
                       onChange={(e) => updateNodeText(node.id, e.target.value)}
-                      onMouseDown={(e) => e.stopPropagation()} 
+                      onMouseDown={(e) => {
+                        if (isSpacePressed) return;
+                        e.stopPropagation();
+                      }} 
                       placeholder="Type..."
-                      className={`col-start-1 row-start-1 resize-none overflow-hidden bg-transparent text-center text-sm font-medium text-white focus:outline-none placeholder-slate-500 break-words ${isSquare ? 'w-full h-full' : ''}`}
+                      className={`col-start-1 row-start-1 resize-none overflow-hidden bg-transparent text-center text-sm font-medium text-white focus:outline-none placeholder-slate-500 break-words whitespace-pre-wrap px-1 min-w-0 ${isSquare ? 'w-full h-full' : ''}`}
                       rows={1}
                     />
                   </div>
