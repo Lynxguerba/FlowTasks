@@ -18,6 +18,15 @@ export const saveNotes = (projectId, notes) => {
   localStorage.setItem(`flowtasks_notes_${projectId}`, JSON.stringify(notes));
 };
 
+export const getCanvas = (projectId) => {
+  const data = localStorage.getItem(`flowtasks_canvas_${projectId}`);
+  return data ? JSON.parse(data) : { nodes: [], connections: [] };
+};
+
+export const saveCanvas = (projectId, canvasData) => {
+  localStorage.setItem(`flowtasks_canvas_${projectId}`, JSON.stringify(canvasData));
+};
+
 export const getCurrentUser = () => {
   return localStorage.getItem('flowtasks_current_user');
 };
