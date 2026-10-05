@@ -90,6 +90,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
   const [hoveredEdge, setHoveredEdge] = useState(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState([]);
   const [selectionBox, setSelectionBox] = useState(null);
+  const [resizingNode, setResizingNode] = useState(null);
 
   // Zoom and Pan State
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -164,15 +165,38 @@ const ProjectWorkspace = ({ project, onBack }) => {
       type,
       x: localX - 48,
       y: localY - 48,
-      text: ''
+      text: '',
+      width: 96,
+      height: 96
     };
     setNodes([...nodes, newNode]);
+  };
+
+  // Node Resizing
+  const startResizeNode = (e, node) => {
+    e.stopPropagation();
+    if (drawingConnection || isSpacePressed) return;
+    
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    const localX = (mouseX - pan.x) / zoom;
+    const localY = (mouseY - pan.y) / zoom;
+    
+    setResizingNode({
+      id: node.id,
+      startX: localX,
+      startY: localY,
+      startWidth: node.width || 96,
+      startHeight: node.height || 96
+    });
   };
 
   // Node Dragging
   const startDragNode = (e, node) => {
     e.stopPropagation();
-    if (drawingConnection || isSpacePressed) return;
+    if (drawingConnection || isSpacePressed || resizingNode) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
@@ -203,12 +227,14 @@ const ProjectWorkspace = ({ project, onBack }) => {
     e.stopPropagation();
     if (isSpacePressed) return;
     
-    let startX = node.x + 48;
-    let startY = node.y + 48;
-    if (handlePos === 'right') startX += 48;
-    if (handlePos === 'left') startX -= 48;
-    if (handlePos === 'bottom') startY += 48;
-    if (handlePos === 'top') startY -= 48;
+    const w = node.width || 96;
+    const h = node.height || 96;
+    let startX = node.x + w / 2;
+    let startY = node.y + h / 2;
+    if (handlePos === 'right') startX += w / 2;
+    if (handlePos === 'left') startX -= w / 2;
+    if (handlePos === 'bottom') startY += h / 2;
+    if (handlePos === 'top') startY -= h / 2;
     
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
@@ -259,8 +285,10 @@ const ProjectWorkspace = ({ project, onBack }) => {
       const maxY = Math.max(selectionBox.startY, localY);
       
       const newlySelected = nodes.filter(node => {
-        const nodeCenterX = node.x + 48;
-        const nodeCenterY = node.y + 48;
+        const w = node.width || 96;
+        const h = node.height || 96;
+        const nodeCenterX = node.x + w / 2;
+        const nodeCenterY = node.y + h / 2;
         return nodeCenterX >= minX && nodeCenterX <= maxX && nodeCenterY >= minY && nodeCenterY <= maxY;
       }).map(n => n.id);
       
@@ -284,6 +312,12 @@ const ProjectWorkspace = ({ project, onBack }) => {
         const y = localY - draggingNode.offsetY;
         setNodes(nodes.map(n => n.id === draggingNode.id ? { ...n, x, y } : n));
       }
+    } else if (resizingNode) {
+      const deltaX = localX - resizingNode.startX;
+      const deltaY = localY - resizingNode.startY;
+      const newWidth = Math.max(48, resizingNode.startWidth + deltaX);
+      const newHeight = Math.max(48, resizingNode.startHeight + deltaY);
+      setNodes(nodes.map(n => n.id === resizingNode.id ? { ...n, width: newWidth, height: newHeight } : n));
     } else if (drawingConnection) {
       setDrawingConnection({
         ...drawingConnection,
@@ -298,6 +332,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
     if (draggingNode) setDraggingNode(null);
     if (drawingConnection) setDrawingConnection(null);
     if (selectionBox) setSelectionBox(null);
+    if (resizingNode) setResizingNode(null);
   };
 
   const handleNodeMouseUp = (e, targetNode) => {
@@ -332,11 +367,11 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   const handleNodeHoverMove = (e, node) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left - 48; // center is 0,0
-    const y = e.clientY - rect.top - 48;
+    const x = e.clientX - rect.left - rect.width / 2; // center is 0,0
+    const y = e.clientY - rect.top - rect.height / 2;
     
     let edge;
-    if (Math.abs(x) > Math.abs(y)) {
+    if (Math.abs(x) / rect.width > Math.abs(y) / rect.height) {
       edge = x > 0 ? 'right' : 'left';
     } else {
       edge = y > 0 ? 'bottom' : 'top';
