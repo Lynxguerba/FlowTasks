@@ -464,6 +464,11 @@ const ProjectWorkspace = ({ project, onBack }) => {
         <div 
           ref={canvasRef}
           className={`w-full h-full relative ${isSpacePressed ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
+          style={{
+            backgroundImage: `linear-gradient(to right, rgba(51, 65, 85, 0.5) 1px, transparent 1px), linear-gradient(to bottom, rgba(51, 65, 85, 0.5) 1px, transparent 1px)`,
+            backgroundSize: `${40 * zoom}px ${40 * zoom}px`,
+            backgroundPosition: `${pan.x}px ${pan.y}px`
+          }}
           onDragOver={onDragOverCanvas}
           onDrop={onDropCanvas}
           onMouseDown={handleCanvasMouseDown}

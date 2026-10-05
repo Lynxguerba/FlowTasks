@@ -9,6 +9,13 @@
   "Eun1215": {
     "projects": [
       {
+        "id": 1791232681312,
+        "name": "EA - Pro",
+        "date": "Just now",
+        "color": "bg-emerald-500",
+        "isTrash": false
+      },
+      {
         "id": 1791232374537,
         "name": "Sample",
         "date": "Just now",
@@ -18,29 +25,44 @@
     ]
   },
   "project_1791232374537": {
-    "notes": [
-      {
-        "id": 1791232482774,
-        "title": "asdfasd",
-        "content": "adsfasdf",
-        "date": "10/6/2026"
-      }
-    ],
+    "notes": [],
     "canvas": {
       "nodes": [
         {
           "id": "1791232502557",
           "type": "Square",
-          "x": 393,
-          "y": 405,
+          "x": 647,
+          "y": -25,
           "text": ""
         },
         {
           "id": "1791232504387",
           "type": "Circle",
-          "x": 277,
-          "y": 314,
+          "x": 252,
+          "y": 320,
           "text": ""
+        }
+      ],
+      "connections": [
+        {
+          "id": "1791232606218",
+          "from": "1791232504387",
+          "fromHandle": "right",
+          "to": "1791232502557"
+        }
+      ]
+    }
+  },
+  "project_1791232681312": {
+    "notes": [],
+    "canvas": {
+      "nodes": [
+        {
+          "id": "1791232685536",
+          "type": "Circle",
+          "x": 210,
+          "y": 414,
+          "text": "EA"
         }
       ],
       "connections": []
