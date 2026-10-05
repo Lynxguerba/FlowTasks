@@ -535,19 +535,23 @@ const ProjectWorkspace = ({ project, onBack }) => {
                 const toNode = nodes.find(n => n.id === conn.to);
                 if (!fromNode || !toNode) return null;
                 
+                const fromW = fromNode.width || 96;
+                const fromH = fromNode.height || 96;
                 const fromHandle = conn.fromHandle || 'right';
-                let startX = fromNode.x + 48;
-                let startY = fromNode.y + 48;
+                let startX = fromNode.x + fromW / 2;
+                let startY = fromNode.y + fromH / 2;
                 let cp1X = startX; 
                 let cp1Y = startY;
                 
-                if (fromHandle === 'right') { startX += 48; cp1X += 50; }
-                if (fromHandle === 'left') { startX -= 48; cp1X -= 50; }
-                if (fromHandle === 'bottom') { startY += 48; cp1Y += 50; }
-                if (fromHandle === 'top') { startY -= 48; cp1Y -= 50; }
+                if (fromHandle === 'right') { startX += fromW / 2; cp1X += 50; }
+                if (fromHandle === 'left') { startX -= fromW / 2; cp1X -= 50; }
+                if (fromHandle === 'bottom') { startY += fromH / 2; cp1Y += 50; }
+                if (fromHandle === 'top') { startY -= fromH / 2; cp1Y -= 50; }
 
-                const targetCenterX = toNode.x + 48;
-                const targetCenterY = toNode.y + 48;
+                const toW = toNode.width || 96;
+                const toH = toNode.height || 96;
+                const targetCenterX = toNode.x + toW / 2;
+                const targetCenterY = toNode.y + toH / 2;
                 
                 let endX = targetCenterX;
                 let endY = targetCenterY;
@@ -556,17 +560,17 @@ const ProjectWorkspace = ({ project, onBack }) => {
                 const dy = targetCenterY - startY;
                 
                 if (Math.abs(dx) > Math.abs(dy)) {
-                  endX = dx > 0 ? toNode.x - 4 : toNode.x + 100;
+                  endX = dx > 0 ? toNode.x - 4 : toNode.x + toW + 4;
                 } else {
-                  endY = dy > 0 ? toNode.y - 4 : toNode.y + 100;
+                  endY = dy > 0 ? toNode.y - 4 : toNode.y + toH + 4;
                 }
                 
                 let cp2X = endX;
                 let cp2Y = endY;
                 if (endX < toNode.x) cp2X -= 50;
-                else if (endX > toNode.x + 90) cp2X += 50;
+                else if (endX > toNode.x + toW - 10) cp2X += 50;
                 else if (endY < toNode.y) cp2Y -= 50;
-                else if (endY > toNode.y + 90) cp2Y += 50;
+                else if (endY > toNode.y + toH - 10) cp2Y += 50;
                 
                 const pathData = `M ${startX} ${startY} C ${cp1X} ${cp1Y}, ${cp2X} ${cp2Y}, ${endX} ${endY}`;
                 
@@ -622,12 +626,20 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
             {/* Render Nodes */}
             {nodes.map(node => {
-              const isExpandable = ['Square', 'Text'].includes(node.type);
+              const isText = node.type === 'Text';
+              const isSquare = node.type === 'Square';
+              const w = node.width || 96;
+              const h = node.height || 96;
+              const nodeStyle = isSquare ? { left: node.x, top: node.y, width: w, height: h } : { left: node.x, top: node.y };
+              const nodeClass = isText 
+                ? 'w-fit h-fit min-w-[6rem] min-h-[6rem] max-w-[16rem]' 
+                : isSquare ? '' : 'w-24 h-24';
+
               return (
               <div
                 key={node.id}
-                style={{ left: node.x, top: node.y }}
-                className={`absolute group z-10 flex items-center justify-center p-4 ${isExpandable ? 'w-fit h-fit min-w-[6rem] min-h-[6rem] max-w-[16rem]' : 'w-24 h-24'} ${selectedNodeIds.includes(node.id) ? 'ring-2 ring-blue-500 rounded-lg bg-blue-500/10' : ''}`}
+                style={nodeStyle}
+                className={`absolute group z-10 flex items-center justify-center p-4 ${nodeClass} ${selectedNodeIds.includes(node.id) ? 'ring-2 ring-blue-500 rounded-lg bg-blue-500/10' : ''}`}
                 onMouseDown={(e) => startDragNode(e, node)}
                 onMouseUp={(e) => handleNodeMouseUp(e, node)}
                 onMouseMove={(e) => handleNodeHoverMove(e, node)}
@@ -639,21 +651,37 @@ const ProjectWorkspace = ({ project, onBack }) => {
                   style={getShapeStyles(node.type)}
                 />
                 
-                {/* Text Input (Auto-expanding) */}
-                <div className="relative z-11 grid w-full">
-                  <div className="col-start-1 row-start-1 invisible whitespace-pre-wrap break-words text-center text-sm font-medium px-1">
-                    {node.text || 'Type...'}
-                    {' '}
+                {/* Text Input */}
+                <div className="relative z-11 flex items-center justify-center w-full h-full pointer-events-none">
+                  <div className="grid w-full pointer-events-auto">
+                    <div className="col-start-1 row-start-1 invisible whitespace-pre-wrap break-words text-center text-sm font-medium px-1">
+                      {node.text || 'Type...'}
+                      {' '}
+                    </div>
+                    <textarea
+                      value={node.text}
+                      onChange={(e) => updateNodeText(node.id, e.target.value)}
+                      onMouseDown={(e) => e.stopPropagation()} 
+                      placeholder="Type..."
+                      className={`col-start-1 row-start-1 resize-none overflow-hidden bg-transparent text-center text-sm font-medium text-white focus:outline-none placeholder-slate-500 break-words ${isSquare ? 'w-full h-full' : ''}`}
+                      rows={1}
+                    />
                   </div>
-                  <textarea
-                    value={node.text}
-                    onChange={(e) => updateNodeText(node.id, e.target.value)}
-                    onMouseDown={(e) => e.stopPropagation()} 
-                    placeholder="Type..."
-                    className="col-start-1 row-start-1 resize-none overflow-hidden bg-transparent text-center text-sm font-medium text-white focus:outline-none placeholder-slate-500 break-words"
-                    rows={1}
-                  />
                 </div>
+
+                {/* Resize Handle for Square */}
+                {isSquare && (
+                  <div 
+                    className="absolute bottom-1 right-1 w-5 h-5 cursor-se-resize opacity-0 group-hover:opacity-100 flex items-center justify-center z-30"
+                    onMouseDown={(e) => startResizeNode(e, node)}
+                    title="Resize shape"
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400 hover:text-white">
+                      <polyline points="21 15 21 21 15 21"></polyline>
+                      <line x1="21" y1="21" x2="14" y2="14"></line>
+                    </svg>
+                  </div>
+                )}
 
                 {/* Connect Buttons */}
                 <button 

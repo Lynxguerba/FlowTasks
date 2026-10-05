@@ -66,6 +66,9 @@ export default defineConfig({
     localApi()
   ],
   server: {
-    host: true // Expose to local network
+    host: true, // Expose to local network
+    watch: {
+      ignored: ['**/workspaces.json']
+    }
   }
 })
