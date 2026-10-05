@@ -15,11 +15,21 @@ import { getProjects, saveProjects } from '../data/storage';
 
 const Welcome = ({ username, onLogout, onOpenProject }) => {
   const [activeTab, setActiveTab] = useState('projects');
-  const [projects, setProjects] = useState(() => getProjects(username));
+  const [projects, setProjects] = useState([]);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    saveProjects(username, projects);
-  }, [projects, username]);
+    getProjects(username).then(data => {
+      setProjects(data);
+      setIsLoaded(true);
+    });
+  }, [username]);
+
+  useEffect(() => {
+    if (isLoaded) {
+      saveProjects(username, projects);
+    }
+  }, [projects, username, isLoaded]);
   
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);

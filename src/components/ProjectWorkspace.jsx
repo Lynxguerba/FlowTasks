@@ -20,8 +20,22 @@ const ProjectWorkspace = ({ project, onBack }) => {
   const [activeSidebarTab, setActiveSidebarTab] = useState('notes'); 
   
   // Notes state
-  const [notes, setNotes] = useState(() => getNotes(project.id));
-  useEffect(() => { saveNotes(project.id, notes); }, [notes, project.id]);
+  const [notes, setNotes] = useState([]);
+  const [isNotesLoaded, setIsNotesLoaded] = useState(false);
+  
+  useEffect(() => {
+    getNotes(project.id).then(data => {
+      setNotes(data);
+      setIsNotesLoaded(true);
+    });
+  }, [project.id]);
+
+  useEffect(() => { 
+    if (isNotesLoaded) {
+      saveNotes(project.id, notes); 
+    }
+  }, [notes, project.id, isNotesLoaded]);
+  
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [noteInput, setNoteInput] = useState('');
   const [noteTitleInput, setNoteTitleInput] = useState('');
@@ -52,13 +66,23 @@ const ProjectWorkspace = ({ project, onBack }) => {
   };
 
   // Canvas State
-  const initialCanvas = getCanvas(project.id);
-  const [nodes, setNodes] = useState(initialCanvas.nodes || []);
-  const [connections, setConnections] = useState(initialCanvas.connections || []);
+  const [nodes, setNodes] = useState([]);
+  const [connections, setConnections] = useState([]);
+  const [isCanvasLoaded, setIsCanvasLoaded] = useState(false);
   
   useEffect(() => {
-    saveCanvas(project.id, { nodes, connections });
-  }, [nodes, connections, project.id]);
+    getCanvas(project.id).then(initialCanvas => {
+      setNodes(initialCanvas.nodes || []);
+      setConnections(initialCanvas.connections || []);
+      setIsCanvasLoaded(true);
+    });
+  }, [project.id]);
+
+  useEffect(() => {
+    if (isCanvasLoaded) {
+      saveCanvas(project.id, { nodes, connections });
+    }
+  }, [nodes, connections, project.id, isCanvasLoaded]);
 
   const canvasRef = useRef(null);
   const [draggingNode, setDraggingNode] = useState(null); 
@@ -281,6 +305,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
       setConnections([
         ...connections, 
         { 
+          // eslint-disable-next-line react-hooks/purity
           id: Date.now().toString(), 
           from: drawingConnection.fromId, 
           fromHandle: drawingConnection.fromHandle,
@@ -310,7 +335,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
     const x = e.clientX - rect.left - 48; // center is 0,0
     const y = e.clientY - rect.top - 48;
     
-    let edge = 'right';
+    let edge;
     if (Math.abs(x) > Math.abs(y)) {
       edge = x > 0 ? 'right' : 'left';
     } else {
