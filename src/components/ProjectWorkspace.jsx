@@ -15,6 +15,80 @@ import {
 } from 'lucide-react';
 import { getNotes, saveNotes, getCanvas, saveCanvas } from '../data/storage';
 
+const LayoutTree = ({ nodes, connections }) => {
+  if (!nodes || nodes.length === 0) {
+    return (
+      <div className="text-center text-slate-500 mt-10">
+        <Layout size={40} className="mx-auto mb-4 opacity-50" />
+        <p>No nodes to display.</p>
+      </div>
+    );
+  }
+
+  const incomingEdges = new Set(connections.map(c => c.to));
+  const rootNodes = nodes.filter(n => !incomingEdges.has(n.id));
+  let startNodes = rootNodes.length > 0 ? rootNodes : [nodes[0]];
+  const allVisited = new Set();
+  
+  const renderTree = (node, visitedPath = new Set(), isLast = false) => {
+    if (!node) return null;
+    
+    const isVisited = visitedPath.has(node.id);
+    const newVisitedPath = new Set(visitedPath).add(node.id);
+    allVisited.add(node.id);
+    
+    const childConnections = connections.filter(c => c.from === node.id);
+    const childNodes = childConnections.map(c => nodes.find(n => n.id === c.to)).filter(Boolean);
+
+    return (
+      <div key={`${node.id}-${visitedPath.size}`} className="relative w-max min-w-full">
+        <div className="flex items-start py-1">
+          <div className="text-sm font-mono whitespace-nowrap pr-2">
+            {node.text ? (
+              <span className="text-green-400">"{node.text}"</span>
+            ) : (
+              <span className="text-slate-400 italic">"{node.type}"</span>
+            )}
+            
+            {isVisited ? (
+              <span className="text-amber-500/70 text-xs ml-2 italic">[Circular]</span>
+            ) : childNodes.length > 0 ? (
+              <span className="text-slate-300 ml-1">:</span>
+            ) : null}
+          </div>
+        </div>
+        
+        {!isVisited && childNodes.length > 0 && (
+          <div className="ml-2 pl-4 border-l border-slate-600 relative">
+            {childNodes.map((child, idx) => renderTree(child, newVisitedPath, idx === childNodes.length - 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const trees = [];
+  startNodes.forEach((node, idx) => {
+    trees.push(renderTree(node, new Set(), idx === startNodes.length - 1));
+  });
+
+  nodes.forEach(node => {
+    if (!allVisited.has(node.id)) {
+      trees.push(renderTree(node, new Set(), true));
+    }
+  });
+
+  return (
+    <div className="bg-slate-900 rounded-xl border border-slate-700 p-4 overflow-auto">
+      <div className="text-slate-300 mb-2 font-mono text-sm w-max min-w-full">{"{"}</div>
+      <div className="ml-2 pl-4 border-l border-slate-600 w-max min-w-full">
+        {trees}
+      </div>
+      <div className="text-slate-300 mt-2 font-mono text-sm w-max min-w-full">{"}"}</div>
+    </div>
+  );
+};
+
 const ProjectWorkspace = ({ project, onBack }) => {
   const [activeSidebarTab, setActiveSidebarTab] = useState('notes'); 
   
@@ -455,10 +529,14 @@ const ProjectWorkspace = ({ project, onBack }) => {
       </div>
 
       {/* Expandable Sidebar Content */}
-      {activeSidebarTab && (
-        <div className="w-80 bg-slate-800 border-r border-slate-700 flex flex-col z-10 shadow-xl">
+      <div 
+        className={`bg-slate-800 flex flex-col z-10 shadow-xl transition-all duration-300 ease-in-out overflow-hidden ${
+          activeSidebarTab ? 'w-80 border-r border-slate-700 opacity-100' : 'w-0 border-r-0 border-transparent opacity-0'
+        }`}
+      >
+        <div className="w-80 h-full flex flex-col">
           <div className="h-16 flex items-center justify-between px-6 border-b border-slate-700 flex-shrink-0">
-            <h2 className="text-lg font-bold text-white capitalize">{activeSidebarTab}</h2>
+            <h2 className="text-lg font-bold text-white capitalize">{activeSidebarTab || ''}</h2>
             {activeSidebarTab === 'notes' && (
               <button onClick={handleCreateNote} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700 transition-colors" title="Create Note">
                 <Plus size={18} />
@@ -467,10 +545,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
           </div>
           <div className="flex-1 overflow-y-auto p-4">
             {activeSidebarTab === 'layouts' && (
-              <div className="text-slate-400 text-center mt-10">
-                <Layout size={40} className="mx-auto mb-4 opacity-50" />
-                <p>Layout options will appear here.</p>
-              </div>
+              <LayoutTree nodes={nodes} connections={connections} />
             )}
             {activeSidebarTab === 'notes' && (
               <div className="space-y-4">
@@ -503,7 +578,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
             )}
           </div>
         </div>
-      )}
+      </div>
 
       {/* Main Canvas Area */}
       <div className="flex-1 bg-slate-900 relative overflow-hidden">
