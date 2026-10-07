@@ -10,7 +10,6 @@ import {
   Type,
   Plus,
   Trash2,
-  Edit2,
   X,
   Save
 } from 'lucide-react';
@@ -39,6 +38,29 @@ const ProjectWorkspace = ({ project, onBack }) => {
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [noteInput, setNoteInput] = useState('');
   const [noteTitleInput, setNoteTitleInput] = useState('');
+  
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [isNoteModalClosing, setIsNoteModalClosing] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDeleteModalClosing, setIsDeleteModalClosing] = useState(false);
+  const [noteToDelete, setNoteToDelete] = useState(null);
+
+  const closeNoteModal = () => {
+    setIsNoteModalClosing(true);
+    setTimeout(() => {
+      setIsNoteModalOpen(false);
+      setIsNoteModalClosing(false);
+    }, 200);
+  };
+
+  const closeDeleteModal = () => {
+    setIsDeleteModalClosing(true);
+    setTimeout(() => {
+      setIsDeleteModalOpen(false);
+      setIsDeleteModalClosing(false);
+      setNoteToDelete(null);
+    }, 200);
+  };
 
   const handleCreateNote = () => {
     const newNote = { id: Date.now(), title: 'New Note', content: '', date: new Date().toLocaleDateString() };
@@ -47,22 +69,41 @@ const ProjectWorkspace = ({ project, onBack }) => {
     setNoteTitleInput(newNote.title);
     setNoteInput(newNote.content);
     setActiveSidebarTab('notes');
+    setIsNoteModalOpen(true);
   };
 
-  const handleSaveNote = (id) => {
-    setNotes(notes.map(n => n.id === id ? { ...n, title: noteTitleInput, content: noteInput } : n));
+  const handleSaveNote = () => {
+    setNotes(notes.map(n => n.id === editingNoteId ? { ...n, title: noteTitleInput, content: noteInput } : n));
     setEditingNoteId(null);
+    closeNoteModal();
   };
 
-  const handleDeleteNote = (id) => {
+  const handleDeleteNoteConfirm = (id) => {
     setNotes(notes.filter(n => n.id !== id));
     if (editingNoteId === id) setEditingNoteId(null);
+    closeDeleteModal();
+  };
+
+  const openDeleteModal = (id, e) => {
+    e.stopPropagation();
+    setNoteToDelete(id);
+    setIsDeleteModalOpen(true);
   };
 
   const handleEditNote = (note) => {
     setEditingNoteId(note.id);
     setNoteTitleInput(note.title);
     setNoteInput(note.content);
+    setIsNoteModalOpen(true);
+  };
+
+  const handleCancelEdit = () => {
+    const note = notes.find(n => n.id === editingNoteId);
+    if (note && !note.content && (!note.title || !note.title.trim() || note.title === 'New Note')) {
+      setNotes(notes.filter(n => n.id !== editingNoteId));
+    }
+    setEditingNoteId(null);
+    closeNoteModal();
   };
 
   // Canvas State
@@ -440,29 +481,21 @@ const ProjectWorkspace = ({ project, onBack }) => {
                   </div>
                 ) : (
                   notes.map(note => (
-                    <div key={note.id} className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
-                      {editingNoteId === note.id ? (
-                        <div className="p-3">
-                          <input type="text" value={noteTitleInput} onChange={(e) => setNoteTitleInput(e.target.value)} className="w-full bg-slate-800 text-white font-medium px-3 py-2 rounded-lg mb-2 focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Note Title" />
-                          <textarea value={noteInput} onChange={(e) => setNoteInput(e.target.value)} className="w-full bg-slate-800 text-slate-300 text-sm px-3 py-2 rounded-lg mb-3 min-h-[120px] resize-none focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Write your note here..." />
-                          <div className="flex justify-end gap-2">
-                            <button onClick={() => { if (!note.content && !note.title.trim()) handleDeleteNote(note.id); else setEditingNoteId(null); }} className="px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">Cancel</button>
-                            <button onClick={() => handleSaveNote(note.id)} className="px-3 py-1.5 text-xs bg-blue-600 text-white hover:bg-blue-500 rounded-lg transition-colors flex items-center gap-1"><Save size={14} /> Save</button>
+                    <div 
+                      key={note.id} 
+                      className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden cursor-pointer hover:border-slate-500 transition-colors"
+                      onClick={() => handleEditNote(note)}
+                    >
+                      <div className="p-4 group">
+                        <div className="flex justify-between items-start mb-2">
+                          <h3 className="font-medium text-white truncate pr-2">{note.title}</h3>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={(e) => openDeleteModal(note.id, e)} className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-slate-700"><Trash2 size={14} /></button>
                           </div>
                         </div>
-                      ) : (
-                        <div className="p-4 group">
-                          <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-medium text-white truncate pr-2">{note.title}</h3>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => handleEditNote(note)} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700"><Edit2 size={14} /></button>
-                              <button onClick={() => handleDeleteNote(note.id)} className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-slate-700"><Trash2 size={14} /></button>
-                            </div>
-                          </div>
-                          <p className="text-sm text-slate-400 whitespace-pre-wrap mb-3 line-clamp-3">{note.content || "Empty note..."}</p>
-                          <div className="text-xs text-slate-500">{note.date}</div>
-                        </div>
-                      )}
+                        <p className="text-sm text-slate-400 whitespace-pre-wrap mb-3 line-clamp-3">{note.content || "Empty note..."}</p>
+                        <div className="text-xs text-slate-500">{note.date}</div>
+                      </div>
                     </div>
                   ))
                 )}
@@ -501,7 +534,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
         {/* Interactive Canvas */}
         <div 
           ref={canvasRef}
-          className={`w-full h-full relative ${isSpacePressed ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
+          className={`w-full h-full relative select-none ${isSpacePressed ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
           style={{
             backgroundImage: `linear-gradient(to right, rgba(51, 65, 85, 0.5) 1px, transparent 1px), linear-gradient(to bottom, rgba(51, 65, 85, 0.5) 1px, transparent 1px)`,
             backgroundSize: `${40 * zoom}px ${40 * zoom}px`,
@@ -760,6 +793,77 @@ const ProjectWorkspace = ({ project, onBack }) => {
           </div>
         </div>
       </div>
+
+      {/* Modal Animations */}
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes fadeOut {
+          from { opacity: 1; }
+          to { opacity: 0; }
+        }
+        @keyframes scaleUp {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes scaleDown {
+          from { opacity: 1; transform: scale(1); }
+          to { opacity: 0; transform: scale(0.95); }
+        }
+      `}</style>
+
+      {/* Note Modal */}
+      {(isNoteModalOpen || isNoteModalClosing) && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm"
+          style={{ animation: isNoteModalClosing ? 'fadeOut 0.2s ease-out forwards' : 'fadeIn 0.2s ease-out' }}
+        >
+          <div 
+            className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-lg shadow-2xl"
+            style={{ animation: isNoteModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out' }}
+          >
+            <input 
+              type="text" 
+              value={noteTitleInput} 
+              onChange={(e) => setNoteTitleInput(e.target.value)} 
+              className="w-full bg-slate-900 text-white text-xl font-bold px-4 py-3 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-700" 
+              placeholder="Note Title" 
+            />
+            <textarea 
+              value={noteInput} 
+              onChange={(e) => setNoteInput(e.target.value)} 
+              className="w-full bg-slate-900 text-slate-300 px-4 py-3 rounded-lg mb-4 min-h-[200px] resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-700" 
+              placeholder="Write your note here..." 
+            />
+            <div className="flex justify-end gap-3">
+              <button onClick={handleCancelEdit} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
+              <button onClick={handleSaveNote} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg transition-colors flex items-center gap-2 font-medium"><Save size={18} /> Save Note</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {(isDeleteModalOpen || isDeleteModalClosing) && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm"
+          style={{ animation: isDeleteModalClosing ? 'fadeOut 0.2s ease-out forwards' : 'fadeIn 0.2s ease-out' }}
+        >
+          <div 
+            className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-sm shadow-2xl"
+            style={{ animation: isDeleteModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out' }}
+          >
+            <h3 className="text-lg font-bold text-white mb-2">Delete Note</h3>
+            <p className="text-slate-400 mb-6">Are you sure you want to delete this note? This action cannot be undone.</p>
+            <div className="flex justify-end gap-3">
+              <button onClick={closeDeleteModal} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
+              <button onClick={() => handleDeleteNoteConfirm(noteToDelete)} className="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg transition-colors font-medium">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

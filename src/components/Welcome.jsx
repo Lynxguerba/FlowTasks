@@ -12,6 +12,7 @@ import {
   X
 } from 'lucide-react';
 import { getProjects, saveProjects } from '../data/storage';
+import ProjectPreview from './ProjectPreview';
 
 const Welcome = ({ username, onLogout, onOpenProject }) => {
   const [activeTab, setActiveTab] = useState('projects');
@@ -228,11 +229,8 @@ const Welcome = ({ username, onLogout, onOpenProject }) => {
                         transition={{ duration: 0.2 }}
                         className="group bg-slate-800 border border-slate-700 rounded-xl overflow-visible hover:border-slate-500 transition-all hover:shadow-xl cursor-pointer relative"
                       >
-                        {/* Project Cover Mockup */}
-                        <div className="h-40 bg-slate-700/50 relative overflow-hidden flex items-center justify-center group-hover:bg-slate-700 transition-colors rounded-t-xl">
-                          <div className={`w-16 h-16 rounded-2xl ${project.color} opacity-20 group-hover:opacity-40 transition-opacity transform group-hover:scale-110 duration-500 rotate-12`} />
-                          <div className={`absolute w-12 h-12 rounded-full ${project.color} opacity-40 blur-xl top-4 left-4`} />
-                        </div>
+                        {/* Project Cover Preview */}
+                        <ProjectPreview projectId={project.id} color={project.color} />
                         
                         {/* Project Info */}
                         <div className="p-4 rounded-b-xl">
@@ -304,9 +302,7 @@ const Welcome = ({ username, onLogout, onOpenProject }) => {
                         transition={{ duration: 0.2 }}
                         className="group bg-slate-800/50 border border-slate-700/50 rounded-xl overflow-visible hover:border-slate-600 transition-all cursor-pointer relative opacity-80 hover:opacity-100"
                       >
-                        <div className="h-32 bg-slate-800 relative overflow-hidden flex items-center justify-center rounded-t-xl grayscale">
-                          <div className={`w-16 h-16 rounded-2xl ${project.color} opacity-10`} />
-                        </div>
+                        <ProjectPreview projectId={project.id} color={project.color} isTrash={true} />
                         
                         <div className="p-4 rounded-b-xl">
                           <div className="flex items-start justify-between relative">
