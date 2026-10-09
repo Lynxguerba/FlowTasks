@@ -64,3 +64,11 @@ export const getCanvas = async (projectId) => {
 export const saveCanvas = async (projectId, canvasData) => {
   await saveData(`project_${projectId}`, 'canvas', canvasData);
 };
+
+export const getTodos = async (projectId) => {
+  return await fetchData(`project_${projectId}`, 'todos', []);
+};
+
+export const saveTodos = async (projectId, todos) => {
+  await saveData(`project_${projectId}`, 'todos', todos);
+};

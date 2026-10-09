@@ -11,9 +11,12 @@ import {
   Plus,
   Trash2,
   X,
-  Save
+  Save,
+  CheckSquare,
+  CheckCircle,
+  Circle as CircleIcon
 } from 'lucide-react';
-import { getNotes, saveNotes, getCanvas, saveCanvas } from '../data/storage';
+import { getNotes, saveNotes, getCanvas, saveCanvas, getTodos, saveTodos } from '../data/storage';
 
 const LayoutTree = ({ nodes, connections }) => {
   if (!nodes || nodes.length === 0) {
@@ -178,6 +181,82 @@ const ProjectWorkspace = ({ project, onBack }) => {
     }
     setEditingNoteId(null);
     closeNoteModal();
+  };
+
+  // Todo State
+  const [todos, setTodos] = useState([]);
+  const [isTodosLoaded, setIsTodosLoaded] = useState(false);
+  
+  useEffect(() => {
+    getTodos(project.id).then(data => {
+      setTodos(data);
+      setIsTodosLoaded(true);
+    });
+  }, [project.id]);
+
+  useEffect(() => { 
+    if (isTodosLoaded) {
+      saveTodos(project.id, todos); 
+    }
+  }, [todos, project.id, isTodosLoaded]);
+
+  const [editingTodoId, setEditingTodoId] = useState(null);
+  const [todoInput, setTodoInput] = useState('');
+  
+  const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
+  const [isTodoModalClosing, setIsTodoModalClosing] = useState(false);
+  
+  const closeTodoModal = () => {
+    setIsTodoModalClosing(true);
+    setTimeout(() => {
+      setIsTodoModalOpen(false);
+      setIsTodoModalClosing(false);
+    }, 200);
+  };
+
+  const handleCreateTodo = () => {
+    const newTodo = { id: Date.now(), text: '', completed: false, date: new Date().toLocaleDateString() };
+    setTodos([newTodo, ...todos]);
+    setEditingTodoId(newTodo.id);
+    setTodoInput('');
+    setActiveSidebarTab('todos');
+    setIsTodoModalOpen(true);
+  };
+
+  const handleSaveTodo = () => {
+    if (!todoInput.trim()) {
+      handleCancelEditTodo();
+      return;
+    }
+    setTodos(todos.map(t => t.id === editingTodoId ? { ...t, text: todoInput } : t));
+    setEditingTodoId(null);
+    closeTodoModal();
+  };
+
+  const handleCancelEditTodo = () => {
+    const todo = todos.find(t => t.id === editingTodoId);
+    if (todo && !todo.text) {
+      setTodos(todos.filter(t => t.id !== editingTodoId));
+    }
+    setEditingTodoId(null);
+    closeTodoModal();
+  };
+
+  const handleEditTodo = (todo, e) => {
+    if (e) e.stopPropagation();
+    setEditingTodoId(todo.id);
+    setTodoInput(todo.text);
+    setIsTodoModalOpen(true);
+  };
+
+  const toggleTodoCompletion = (id, e) => {
+    if (e) e.stopPropagation();
+    setTodos(todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+  };
+  
+  const handleDeleteTodo = (id, e) => {
+    if (e) e.stopPropagation();
+    setTodos(todos.filter(t => t.id !== id));
   };
 
   // Canvas State
@@ -525,6 +604,9 @@ const ProjectWorkspace = ({ project, onBack }) => {
           <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'notes' ? null : 'notes')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'notes' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="Notes">
             <FileText size={20} />
           </button>
+          <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'todos' ? null : 'todos')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'todos' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="To-Do List">
+            <CheckSquare size={20} />
+          </button>
         </div>
       </div>
 
@@ -539,6 +621,11 @@ const ProjectWorkspace = ({ project, onBack }) => {
             <h2 className="text-lg font-bold text-white capitalize">{activeSidebarTab || ''}</h2>
             {activeSidebarTab === 'notes' && (
               <button onClick={handleCreateNote} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700 transition-colors" title="Create Note">
+                <Plus size={18} />
+              </button>
+            )}
+            {activeSidebarTab === 'todos' && (
+              <button onClick={handleCreateTodo} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700 transition-colors" title="Create Task">
                 <Plus size={18} />
               </button>
             )}
@@ -570,6 +657,42 @@ const ProjectWorkspace = ({ project, onBack }) => {
                         </div>
                         <p className="text-sm text-slate-400 whitespace-pre-wrap mb-3 line-clamp-3">{note.content || "Empty note..."}</p>
                         <div className="text-xs text-slate-500">{note.date}</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+            {activeSidebarTab === 'todos' && (
+              <div className="space-y-3">
+                {todos.length === 0 ? (
+                  <div className="text-center text-slate-500 mt-10">
+                    <p>No tasks yet.</p>
+                    <button onClick={handleCreateTodo} className="text-blue-400 hover:text-blue-300 text-sm mt-2 font-medium">Create your first task</button>
+                  </div>
+                ) : (
+                  todos.map(todo => (
+                    <div 
+                      key={todo.id} 
+                      className={`bg-slate-900 rounded-xl border ${todo.completed ? 'border-slate-800 bg-slate-900/50' : 'border-slate-700'} overflow-hidden cursor-pointer hover:border-slate-500 transition-colors flex flex-col`}
+                      onClick={(e) => handleEditTodo(todo, e)}
+                    >
+                      <div className="p-3 group flex items-start gap-3">
+                        <button 
+                          onClick={(e) => toggleTodoCompletion(todo.id, e)} 
+                          className={`mt-0.5 flex-shrink-0 transition-colors ${todo.completed ? 'text-green-500' : 'text-slate-400 hover:text-white'}`}
+                        >
+                          {todo.completed ? <CheckCircle size={18} /> : <CircleIcon size={18} />}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm whitespace-pre-wrap line-clamp-3 ${todo.completed ? 'text-slate-500 line-through' : 'text-slate-300'}`}>
+                            {todo.text || "Empty task..."}
+                          </p>
+                          <div className="text-xs text-slate-500 mt-1">{todo.date}</div>
+                        </div>
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={(e) => handleDeleteTodo(todo.id, e)} className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-slate-700"><Trash2 size={14} /></button>
+                        </div>
                       </div>
                     </div>
                   ))
@@ -935,6 +1058,39 @@ const ProjectWorkspace = ({ project, onBack }) => {
             <div className="flex justify-end gap-3">
               <button onClick={closeDeleteModal} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
               <button onClick={() => handleDeleteNoteConfirm(noteToDelete)} className="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg transition-colors font-medium">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Todo Modal */}
+      {(isTodoModalOpen || isTodoModalClosing) && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4"
+          style={{ animation: isTodoModalClosing ? 'fadeOut 0.2s ease-out forwards' : 'fadeIn 0.2s ease-out' }}
+        >
+          <div 
+            className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-4xl shadow-2xl flex flex-col"
+            style={{ animation: isTodoModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out', height: '85vh' }}
+          >
+            <h3 className="text-xl font-bold text-white mb-4">Task Details</h3>
+            <textarea 
+              value={todoInput} 
+              onChange={(e) => setTodoInput(e.target.value)} 
+              className="flex-1 w-full bg-slate-900 text-slate-300 px-4 py-3 rounded-lg mb-4 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-700 text-lg" 
+              placeholder="Write your task here..." 
+            />
+            <div className="flex justify-between gap-3 mt-auto">
+              <button 
+                onClick={(e) => { handleDeleteTodo(editingTodoId, e); closeTodoModal(); }} 
+                className="px-4 py-2 text-red-400 hover:text-white hover:bg-red-600 rounded-lg transition-colors font-medium flex items-center gap-2"
+              >
+                <Trash2 size={18} /> Delete
+              </button>
+              <div className="flex gap-3">
+                <button onClick={handleCancelEditTodo} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
+                <button onClick={handleSaveTodo} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg transition-colors flex items-center gap-2 font-medium"><Save size={18} /> Save Task</button>
+              </div>
             </div>
           </div>
         </div>
