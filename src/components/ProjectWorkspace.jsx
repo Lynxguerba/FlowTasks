@@ -14,8 +14,11 @@ import {
   Save,
   CheckSquare,
   CheckCircle,
-  Circle as CircleIcon
+  Circle as CircleIcon,
+  Upload,
+  GripVertical
 } from 'lucide-react';
+import { Reorder } from 'framer-motion';
 import { getNotes, saveNotes, getCanvas, saveCanvas, getTodos, saveTodos } from '../data/storage';
 
 const LayoutTree = ({ nodes, connections }) => {
@@ -33,7 +36,7 @@ const LayoutTree = ({ nodes, connections }) => {
   let startNodes = rootNodes.length > 0 ? rootNodes : [nodes[0]];
   const allVisited = new Set();
   
-  const renderTree = (node, visitedPath = new Set(), isLast = false) => {
+  const renderTree = (node, visitedPath = new Set()) => {
     if (!node) return null;
     
     const isVisited = visitedPath.has(node.id);
@@ -106,9 +109,17 @@ const ProjectWorkspace = ({ project, onBack }) => {
     });
   }, [project.id]);
 
+  const notesRef = useRef(notes);
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
+
   useEffect(() => { 
     if (isNotesLoaded) {
-      saveNotes(project.id, notes); 
+      const timer = setTimeout(() => {
+        saveNotes(project.id, notes); 
+      }, 300);
+      return () => clearTimeout(timer);
     }
   }, [notes, project.id, isNotesLoaded]);
   
@@ -194,23 +205,50 @@ const ProjectWorkspace = ({ project, onBack }) => {
     });
   }, [project.id]);
 
+  const todosRef = useRef(todos);
+  useEffect(() => {
+    todosRef.current = todos;
+  }, [todos]);
+
   useEffect(() => { 
     if (isTodosLoaded) {
-      saveTodos(project.id, todos); 
+      const timer = setTimeout(() => {
+        saveTodos(project.id, todos); 
+      }, 300);
+      return () => clearTimeout(timer);
     }
   }, [todos, project.id, isTodosLoaded]);
+
+  useEffect(() => {
+    return () => {
+      if (isNotesLoaded) saveNotes(project.id, notesRef.current);
+      if (isTodosLoaded) saveTodos(project.id, todosRef.current);
+    };
+  }, [project.id, isNotesLoaded, isTodosLoaded]);
 
   const [editingTodoId, setEditingTodoId] = useState(null);
   const [todoInput, setTodoInput] = useState('');
   
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isTodoModalClosing, setIsTodoModalClosing] = useState(false);
+  const [isDeleteTodoModalOpen, setIsDeleteTodoModalOpen] = useState(false);
+  const [isDeleteTodoModalClosing, setIsDeleteTodoModalClosing] = useState(false);
+  const [todoToDelete, setTodoToDelete] = useState(null);
   
   const closeTodoModal = () => {
     setIsTodoModalClosing(true);
     setTimeout(() => {
       setIsTodoModalOpen(false);
       setIsTodoModalClosing(false);
+    }, 200);
+  };
+
+  const closeDeleteTodoModal = () => {
+    setIsDeleteTodoModalClosing(true);
+    setTimeout(() => {
+      setIsDeleteTodoModalOpen(false);
+      setIsDeleteTodoModalClosing(false);
+      setTodoToDelete(null);
     }, 200);
   };
 
@@ -254,9 +292,19 @@ const ProjectWorkspace = ({ project, onBack }) => {
     setTodos(todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
   };
   
-  const handleDeleteTodo = (id, e) => {
-    if (e) e.stopPropagation();
+  const handleDeleteTodoConfirm = (id) => {
     setTodos(todos.filter(t => t.id !== id));
+    if (editingTodoId === id) {
+      setEditingTodoId(null);
+      closeTodoModal();
+    }
+    closeDeleteTodoModal();
+  };
+
+  const openDeleteTodoModal = (id, e) => {
+    if (e) e.stopPropagation();
+    setTodoToDelete(id);
+    setIsDeleteTodoModalOpen(true);
   };
 
   // Canvas State
@@ -285,6 +333,83 @@ const ProjectWorkspace = ({ project, onBack }) => {
   const [selectedNodeIds, setSelectedNodeIds] = useState([]);
   const [selectionBox, setSelectionBox] = useState(null);
   const [resizingNode, setResizingNode] = useState(null);
+
+  const generateFlowFromFileTree = (content) => {
+    const lines = content.split('\n');
+    const newNodes = [];
+    const newConnections = [];
+    const parentStack = [];
+
+    let currentY = nodes.length > 0 ? Math.max(...nodes.map(n => n.y + (n.height || 96))) + 100 : 0;
+    const startX = 0;
+    const verticalSpacing = 120;
+    const horizontalSpacing = 200;
+
+    lines.forEach((line) => {
+      line = line.replace(/\r$/, '');
+      if (!line.trim() || line.startsWith('```')) return;
+
+      const prefixMatch = line.match(/^[\s│├└─]*/);
+      const prefix = prefixMatch ? prefixMatch[0] : '';
+      const name = line.slice(prefix.length).trim();
+      if (!name) return;
+
+      const depth = Math.round(prefix.length / 4);
+      const nodeId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+      
+      while (parentStack.length > 0 && parentStack[parentStack.length - 1].depth >= depth) {
+        parentStack.pop();
+      }
+      const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1] : null;
+
+      const nodeX = parent ? parent.x + horizontalSpacing : startX;
+      const nodeY = currentY;
+
+      const newNode = {
+        id: nodeId,
+        type: 'Square',
+        x: nodeX,
+        y: nodeY,
+        text: name,
+        width: 140,
+        height: 60
+      };
+      
+      newNodes.push(newNode);
+      currentY += verticalSpacing;
+
+      if (parent) {
+        newConnections.push({
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          from: parent.id,
+          fromHandle: 'right',
+          to: nodeId,
+          toHandle: 'left'
+        });
+      }
+
+      parentStack.push({ depth, id: nodeId, x: nodeX, y: nodeY });
+    });
+
+    if (newNodes.length > 0) {
+      setNodes(prev => [...prev, ...newNodes]);
+      setConnections(prev => [...prev, ...newConnections]);
+      setActiveSidebarTab('layouts');
+    }
+  };
+
+  const handleFileUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target.result;
+      generateFlowFromFileTree(content);
+    };
+    reader.readAsText(file);
+    event.target.value = null;
+  };
 
   // Zoom and Pan State
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -534,6 +659,17 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   const handleNodeMouseUp = (e, targetNode) => {
     if (drawingConnection && drawingConnection.fromId !== targetNode.id) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left - rect.width / 2; // center is 0,0
+      const y = e.clientY - rect.top - rect.height / 2;
+      
+      let toHandle;
+      if (Math.abs(x) / rect.width > Math.abs(y) / rect.height) {
+        toHandle = x > 0 ? 'right' : 'left';
+      } else {
+        toHandle = y > 0 ? 'bottom' : 'top';
+      }
+
       setConnections([
         ...connections, 
         { 
@@ -541,7 +677,8 @@ const ProjectWorkspace = ({ project, onBack }) => {
           id: Date.now().toString(), 
           from: drawingConnection.fromId, 
           fromHandle: drawingConnection.fromHandle,
-          to: targetNode.id 
+          to: targetNode.id,
+          toHandle
         }
       ]);
       setDrawingConnection(null);
@@ -607,6 +744,9 @@ const ProjectWorkspace = ({ project, onBack }) => {
           <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'todos' ? null : 'todos')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'todos' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="To-Do List">
             <CheckSquare size={20} />
           </button>
+          <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'import' ? null : 'import')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'import' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="Import File Tree">
+            <Upload size={20} />
+          </button>
         </div>
       </div>
 
@@ -635,68 +775,140 @@ const ProjectWorkspace = ({ project, onBack }) => {
               <LayoutTree nodes={nodes} connections={connections} />
             )}
             {activeSidebarTab === 'notes' && (
-              <div className="space-y-4">
+              <div>
                 {notes.length === 0 ? (
                   <div className="text-center text-slate-500 mt-10">
                     <p>No notes yet.</p>
                     <button onClick={handleCreateNote} className="text-blue-400 hover:text-blue-300 text-sm mt-2 font-medium">Create your first note</button>
                   </div>
                 ) : (
-                  notes.map(note => (
-                    <div 
-                      key={note.id} 
-                      className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden cursor-pointer hover:border-slate-500 transition-colors"
-                      onClick={() => handleEditNote(note)}
-                    >
-                      <div className="p-4 group">
-                        <div className="flex justify-between items-start mb-2">
-                          <h3 className="font-medium text-white truncate pr-2">{note.title}</h3>
-                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={(e) => openDeleteModal(note.id, e)} className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-slate-700"><Trash2 size={14} /></button>
+                  <Reorder.Group 
+                    axis="y" 
+                    values={notes} 
+                    onReorder={setNotes} 
+                    className="space-y-4 list-none p-0 m-0"
+                  >
+                    {notes.map(note => (
+                      <Reorder.Item 
+                        key={note.id} 
+                        value={note}
+                        whileDrag={{ 
+                          scale: 1.02, 
+                          zIndex: 50, 
+                          boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5)" 
+                        }}
+                        className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none list-none relative group/note"
+                        onClick={() => handleEditNote(note)}
+                      >
+                        <div className="p-4 flex gap-2.5 items-start">
+                          <div 
+                            className="text-slate-500 group-hover/note:text-slate-300 p-0.5 -ml-1 mt-0.5 rounded transition-colors flex-shrink-0"
+                            title="Drag to reorder"
+                          >
+                            <GripVertical size={16} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start mb-2">
+                              <h3 className="font-medium text-white truncate pr-2">{note.title}</h3>
+                              <div className="flex gap-1 opacity-0 group-hover/note:opacity-100 transition-opacity">
+                                <button 
+                                  type="button"
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => openDeleteModal(note.id, e)} 
+                                  className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-slate-700 transition-colors"
+                                  title="Delete note"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-sm text-slate-400 whitespace-pre-wrap mb-3 line-clamp-3">{note.content || "Empty note..."}</p>
+                            <div className="text-xs text-slate-500">{note.date}</div>
                           </div>
                         </div>
-                        <p className="text-sm text-slate-400 whitespace-pre-wrap mb-3 line-clamp-3">{note.content || "Empty note..."}</p>
-                        <div className="text-xs text-slate-500">{note.date}</div>
-                      </div>
-                    </div>
-                  ))
+                      </Reorder.Item>
+                    ))}
+                  </Reorder.Group>
                 )}
               </div>
             )}
             {activeSidebarTab === 'todos' && (
-              <div className="space-y-3">
+              <div>
                 {todos.length === 0 ? (
                   <div className="text-center text-slate-500 mt-10">
                     <p>No tasks yet.</p>
                     <button onClick={handleCreateTodo} className="text-blue-400 hover:text-blue-300 text-sm mt-2 font-medium">Create your first task</button>
                   </div>
                 ) : (
-                  todos.map(todo => (
-                    <div 
-                      key={todo.id} 
-                      className={`bg-slate-900 rounded-xl border ${todo.completed ? 'border-slate-800 bg-slate-900/50' : 'border-slate-700'} overflow-hidden cursor-pointer hover:border-slate-500 transition-colors flex flex-col`}
-                      onClick={(e) => handleEditTodo(todo, e)}
-                    >
-                      <div className="p-3 group flex items-start gap-3">
-                        <button 
-                          onClick={(e) => toggleTodoCompletion(todo.id, e)} 
-                          className={`mt-0.5 flex-shrink-0 transition-colors ${todo.completed ? 'text-green-500' : 'text-slate-400 hover:text-white'}`}
-                        >
-                          {todo.completed ? <CheckCircle size={18} /> : <CircleIcon size={18} />}
-                        </button>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm whitespace-pre-wrap line-clamp-3 ${todo.completed ? 'text-slate-500 line-through' : 'text-slate-300'}`}>
-                            {todo.text || "Empty task..."}
-                          </p>
-                          <div className="text-xs text-slate-500 mt-1">{todo.date}</div>
+                  <Reorder.Group 
+                    axis="y" 
+                    values={todos} 
+                    onReorder={setTodos} 
+                    className="space-y-3 list-none p-0 m-0"
+                  >
+                    {todos.map(todo => (
+                      <Reorder.Item 
+                        key={todo.id} 
+                        value={todo}
+                        whileDrag={{ 
+                          scale: 1.02, 
+                          zIndex: 50, 
+                          boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5)" 
+                        }}
+                        className={`bg-slate-900 rounded-xl border ${todo.completed ? 'border-slate-800 bg-slate-900/50' : 'border-slate-700'} overflow-hidden cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none list-none relative group/todo flex flex-col`}
+                        onClick={(e) => handleEditTodo(todo, e)}
+                      >
+                        <div className="p-3 flex items-start gap-2.5">
+                          <div 
+                            className="text-slate-500 group-hover/todo:text-slate-300 p-0.5 -ml-1 mt-0.5 rounded transition-colors flex-shrink-0"
+                            title="Drag to reorder"
+                          >
+                            <GripVertical size={16} />
+                          </div>
+                          <button 
+                            type="button"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => toggleTodoCompletion(todo.id, e)} 
+                            className={`mt-0.5 flex-shrink-0 transition-colors ${todo.completed ? 'text-green-500' : 'text-slate-400 hover:text-white'}`}
+                            title={todo.completed ? "Mark incomplete" : "Mark complete"}
+                          >
+                            {todo.completed ? <CheckCircle size={18} /> : <CircleIcon size={18} />}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm whitespace-pre-wrap line-clamp-3 ${todo.completed ? 'text-slate-500 line-through' : 'text-slate-300'}`}>
+                              {todo.text || "Empty task..."}
+                            </p>
+                            <div className="text-xs text-slate-500 mt-1">{todo.date}</div>
+                          </div>
+                          <div className="flex gap-1 opacity-0 group-hover/todo:opacity-100 transition-opacity flex-shrink-0">
+                            <button 
+                              type="button"
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => openDeleteTodoModal(todo.id, e)} 
+                              className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-slate-700 transition-colors"
+                              title="Delete task"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={(e) => handleDeleteTodo(todo.id, e)} className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-slate-700"><Trash2 size={14} /></button>
-                        </div>
-                      </div>
-                    </div>
-                  ))
+                      </Reorder.Item>
+                    ))}
+                  </Reorder.Group>
                 )}
+              </div>
+            )}
+            {activeSidebarTab === 'import' && (
+              <div className="space-y-4">
+                <div className="text-center text-slate-500 mt-10">
+                  <Upload size={40} className="mx-auto mb-4 opacity-50" />
+                  <p>Upload a Markdown file containing a file tree to generate a flow on the canvas.</p>
+                  <label className="mt-6 cursor-pointer inline-flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors font-medium">
+                    <Upload size={18} className="mr-2" />
+                    Upload .md File
+                    <input type="file" accept=".md" className="hidden" onChange={handleFileUpload} />
+                  </label>
+                </div>
               </div>
             )}
           </div>
@@ -789,22 +1001,41 @@ const ProjectWorkspace = ({ project, onBack }) => {
                 
                 let endX = targetCenterX;
                 let endY = targetCenterY;
+                let cp2X, cp2Y;
                 
-                const dx = targetCenterX - startX;
-                const dy = targetCenterY - startY;
-                
-                if (Math.abs(dx) > Math.abs(dy)) {
-                  endX = dx > 0 ? toNode.x - 4 : toNode.x + toW + 4;
+                if (conn.toHandle) {
+                  if (conn.toHandle === 'left') {
+                    endX = toNode.x - 4;
+                  } else if (conn.toHandle === 'right') {
+                    endX = toNode.x + toW + 4;
+                  } else if (conn.toHandle === 'top') {
+                    endY = toNode.y - 4;
+                  } else if (conn.toHandle === 'bottom') {
+                    endY = toNode.y + toH + 4;
+                  }
+                  cp2X = endX;
+                  cp2Y = endY;
+                  if (conn.toHandle === 'left') cp2X -= 50;
+                  else if (conn.toHandle === 'right') cp2X += 50;
+                  else if (conn.toHandle === 'top') cp2Y -= 50;
+                  else if (conn.toHandle === 'bottom') cp2Y += 50;
                 } else {
-                  endY = dy > 0 ? toNode.y - 4 : toNode.y + toH + 4;
+                  const dx = targetCenterX - startX;
+                  const dy = targetCenterY - startY;
+                  
+                  if (Math.abs(dx) > Math.abs(dy)) {
+                    endX = dx > 0 ? toNode.x - 4 : toNode.x + toW + 4;
+                  } else {
+                    endY = dy > 0 ? toNode.y - 4 : toNode.y + toH + 4;
+                  }
+                  
+                  cp2X = endX;
+                  cp2Y = endY;
+                  if (endX < toNode.x) cp2X -= 50;
+                  else if (endX > toNode.x + toW - 10) cp2X += 50;
+                  else if (endY < toNode.y) cp2Y -= 50;
+                  else if (endY > toNode.y + toH - 10) cp2Y += 50;
                 }
-                
-                let cp2X = endX;
-                let cp2Y = endY;
-                if (endX < toNode.x) cp2X -= 50;
-                else if (endX > toNode.x + toW - 10) cp2X += 50;
-                else if (endY < toNode.y) cp2Y -= 50;
-                else if (endY > toNode.y + toH - 10) cp2Y += 50;
                 
                 const pathData = `M ${startX} ${startY} C ${cp1X} ${cp1Y}, ${cp2X} ${cp2Y}, ${endX} ${endY}`;
                 
@@ -1082,7 +1313,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
             />
             <div className="flex justify-between gap-3 mt-auto">
               <button 
-                onClick={(e) => { handleDeleteTodo(editingTodoId, e); closeTodoModal(); }} 
+                onClick={(e) => { openDeleteTodoModal(editingTodoId, e); }} 
                 className="px-4 py-2 text-red-400 hover:text-white hover:bg-red-600 rounded-lg transition-colors font-medium flex items-center gap-2"
               >
                 <Trash2 size={18} /> Delete
@@ -1091,6 +1322,26 @@ const ProjectWorkspace = ({ project, onBack }) => {
                 <button onClick={handleCancelEditTodo} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
                 <button onClick={handleSaveTodo} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg transition-colors flex items-center gap-2 font-medium"><Save size={18} /> Save Task</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Todo Confirmation Modal */}
+      {(isDeleteTodoModalOpen || isDeleteTodoModalClosing) && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm"
+          style={{ animation: isDeleteTodoModalClosing ? 'fadeOut 0.2s ease-out forwards' : 'fadeIn 0.2s ease-out' }}
+        >
+          <div 
+            className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-sm shadow-2xl"
+            style={{ animation: isDeleteTodoModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out' }}
+          >
+            <h3 className="text-lg font-bold text-white mb-2">Delete Task</h3>
+            <p className="text-slate-400 mb-6">Are you sure you want to delete this task? This action cannot be undone.</p>
+            <div className="flex justify-end gap-3">
+              <button onClick={closeDeleteTodoModal} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
+              <button onClick={() => handleDeleteTodoConfirm(todoToDelete)} className="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg transition-colors font-medium">Delete</button>
             </div>
           </div>
         </div>
