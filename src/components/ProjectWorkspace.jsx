@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   ArrowLeft, 
   Layout, 
@@ -16,7 +16,9 @@ import {
   CheckCircle,
   Circle as CircleIcon,
   Upload,
-  GripVertical
+  GripVertical,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 import { Reorder } from 'framer-motion';
 import { getNotes, saveNotes, getCanvas, saveCanvas, getTodos, saveTodos } from '../data/storage';
@@ -311,12 +313,35 @@ const ProjectWorkspace = ({ project, onBack }) => {
   const [nodes, setNodes] = useState([]);
   const [connections, setConnections] = useState([]);
   const [isCanvasLoaded, setIsCanvasLoaded] = useState(false);
+  const [selectedNodeIds, setSelectedNodeIds] = useState([]);
   
+  // History State for Canvas (Undo / Redo)
+  const [history, setHistory] = useState({ past: [], future: [] });
+
+  const nodesRef = useRef(nodes);
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  const connectionsRef = useRef(connections);
+  useEffect(() => {
+    connectionsRef.current = connections;
+  }, [connections]);
+
+  const selectedNodeIdsRef = useRef(selectedNodeIds);
+  useEffect(() => {
+    selectedNodeIdsRef.current = selectedNodeIds;
+  }, [selectedNodeIds]);
+
+  const dragInitialStateRef = useRef(null);
+  const textBeforeEditRef = useRef(null);
+
   useEffect(() => {
     getCanvas(project.id).then(initialCanvas => {
       setNodes(initialCanvas.nodes || []);
       setConnections(initialCanvas.connections || []);
       setIsCanvasLoaded(true);
+      setHistory({ past: [], future: [] });
     });
   }, [project.id]);
 
@@ -326,13 +351,76 @@ const ProjectWorkspace = ({ project, onBack }) => {
     }
   }, [nodes, connections, project.id, isCanvasLoaded]);
 
+  const pushHistory = (pastNodes = nodesRef.current, pastConnections = connectionsRef.current) => {
+    const nodesClone = pastNodes.map(n => ({ ...n }));
+    const connsClone = pastConnections.map(c => ({ ...c }));
+    setHistory(curr => ({
+      past: [...curr.past.slice(-30), { nodes: nodesClone, connections: connsClone }],
+      future: []
+    }));
+  };
+
+  const handleUndo = useCallback(() => {
+    setHistory(curr => {
+      if (curr.past.length === 0) return curr;
+      const previous = curr.past[curr.past.length - 1];
+      const newPast = curr.past.slice(0, curr.past.length - 1);
+      const currentSnapshot = {
+        nodes: nodesRef.current.map(n => ({ ...n })),
+        connections: connectionsRef.current.map(c => ({ ...c }))
+      };
+      const newFuture = [currentSnapshot, ...curr.future];
+      
+      setNodes(previous.nodes.map(n => ({ ...n })));
+      setConnections(previous.connections.map(c => ({ ...c })));
+      setSelectedNodeIds([]);
+      
+      return {
+        past: newPast,
+        future: newFuture
+      };
+    });
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    setHistory(curr => {
+      if (curr.future.length === 0) return curr;
+      const next = curr.future[0];
+      const newFuture = curr.future.slice(1);
+      const currentSnapshot = {
+        nodes: nodesRef.current.map(n => ({ ...n })),
+        connections: connectionsRef.current.map(c => ({ ...c }))
+      };
+      const newPast = [...curr.past, currentSnapshot];
+      
+      setNodes(next.nodes.map(n => ({ ...n })));
+      setConnections(next.connections.map(c => ({ ...c })));
+      setSelectedNodeIds([]);
+      
+      return {
+        past: newPast,
+        future: newFuture
+      };
+    });
+  }, []);
+
   const canvasRef = useRef(null);
   const [draggingNode, setDraggingNode] = useState(null); 
   const [drawingConnection, setDrawingConnection] = useState(null); 
   const [hoveredEdge, setHoveredEdge] = useState(null);
-  const [selectedNodeIds, setSelectedNodeIds] = useState([]);
+
   const [selectionBox, setSelectionBox] = useState(null);
   const [resizingNode, setResizingNode] = useState(null);
+
+  const deleteSelectedNodes = useCallback(() => {
+    const ids = selectedNodeIdsRef.current;
+    if (!ids || ids.length === 0) return;
+    pushHistory();
+    const idsToDelete = new Set(ids);
+    setNodes(prev => prev.filter(n => !idsToDelete.has(n.id)));
+    setConnections(prev => prev.filter(c => !idsToDelete.has(c.from) && !idsToDelete.has(c.to)));
+    setSelectedNodeIds([]);
+  }, []);
 
   const generateFlowFromFileTree = (content) => {
     const lines = content.split('\n');
@@ -392,6 +480,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
     });
 
     if (newNodes.length > 0) {
+      pushHistory();
       setNodes(prev => [...prev, ...newNodes]);
       setConnections(prev => [...prev, ...newConnections]);
       setActiveSidebarTab('layouts');
@@ -417,12 +506,62 @@ const ProjectWorkspace = ({ project, onBack }) => {
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
 
-  // Keyboard events for Spacebar panning
+  const isAnyModalOpen = isNoteModalOpen || isDeleteModalOpen || isTodoModalOpen || isDeleteTodoModalOpen;
+  const isAnyModalOpenRef = useRef(isAnyModalOpen);
+  useEffect(() => {
+    isAnyModalOpenRef.current = isAnyModalOpen;
+  }, [isAnyModalOpen]);
+
+  const handleUndoRef = useRef(handleUndo);
+  useEffect(() => {
+    handleUndoRef.current = handleUndo;
+  }, [handleUndo]);
+
+  const handleRedoRef = useRef(handleRedo);
+  useEffect(() => {
+    handleRedoRef.current = handleRedo;
+  }, [handleRedo]);
+
+  const deleteSelectedNodesRef = useRef(deleteSelectedNodes);
+  useEffect(() => {
+    deleteSelectedNodesRef.current = deleteSelectedNodes;
+  }, [deleteSelectedNodes]);
+
+  // Keyboard events for Spacebar panning, Delete/Backspace, and Undo/Redo
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
         setIsSpacePressed(true);
         e.preventDefault(); // Prevent page scroll
+        return;
+      }
+
+      if (isAnyModalOpenRef.current) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+
+      // Delete or Backspace key to delete selected shapes
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedNodeIdsRef.current.length > 0) {
+          e.preventDefault();
+          deleteSelectedNodesRef.current();
+        }
+        return;
+      }
+
+      // Undo: Ctrl+Z or Cmd+Z
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+        e.preventDefault();
+        handleUndoRef.current();
+        return;
+      }
+
+      // Redo: Ctrl+Y, Cmd+Y, Ctrl+Shift+Z, or Cmd+Shift+Z
+      const isRedo = ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) ||
+                     ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && e.shiftKey);
+      if (isRedo) {
+        e.preventDefault();
+        handleRedoRef.current();
+        return;
       }
     };
     const handleKeyUp = (e) => {
@@ -488,6 +627,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
       width: 96,
       height: 96
     };
+    pushHistory();
     setNodes([...nodes, newNode]);
   };
 
@@ -497,6 +637,11 @@ const ProjectWorkspace = ({ project, onBack }) => {
     e.stopPropagation();
     if (drawingConnection) return;
     
+    dragInitialStateRef.current = {
+      nodes: nodesRef.current.map(n => ({ ...n })),
+      connections: connectionsRef.current.map(c => ({ ...c }))
+    };
+
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
@@ -518,6 +663,12 @@ const ProjectWorkspace = ({ project, onBack }) => {
     if (isSpacePressed) return;
     e.stopPropagation();
     if (drawingConnection || resizingNode) return;
+
+    dragInitialStateRef.current = {
+      nodes: nodesRef.current.map(n => ({ ...n })),
+      connections: connectionsRef.current.map(c => ({ ...c }))
+    };
+
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
@@ -525,6 +676,22 @@ const ProjectWorkspace = ({ project, onBack }) => {
     const localX = (mouseX - pan.x) / zoom;
     const localY = (mouseY - pan.y) / zoom;
     
+    if (e.shiftKey) {
+      const isSelected = selectedNodeIds.includes(node.id);
+      const nextSelected = isSelected 
+        ? selectedNodeIds.filter(id => id !== node.id)
+        : [...selectedNodeIds, node.id];
+      setSelectedNodeIds(nextSelected);
+      if (isSelected) return;
+      setDraggingNode({
+        isGroup: true,
+        startX: localX,
+        startY: localY,
+        initialNodes: nodes.filter(n => nextSelected.includes(n.id))
+      });
+      return;
+    }
+
     if (selectedNodeIds.includes(node.id)) {
       setDraggingNode({
         isGroup: true,
@@ -651,10 +818,34 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   const handleCanvasMouseUp = () => {
     if (isPanning) setIsPanning(false);
-    if (draggingNode) setDraggingNode(null);
+    if (draggingNode) {
+      if (dragInitialStateRef.current) {
+        const hasMoved = nodesRef.current.some(n => {
+          const init = dragInitialStateRef.current.nodes.find(i => i.id === n.id);
+          return init && (init.x !== n.x || init.y !== n.y);
+        });
+        if (hasMoved) {
+          pushHistory(dragInitialStateRef.current.nodes, dragInitialStateRef.current.connections);
+        }
+        dragInitialStateRef.current = null;
+      }
+      setDraggingNode(null);
+    }
     if (drawingConnection) setDrawingConnection(null);
     if (selectionBox) setSelectionBox(null);
-    if (resizingNode) setResizingNode(null);
+    if (resizingNode) {
+      if (dragInitialStateRef.current) {
+        const hasResized = nodesRef.current.some(n => {
+          const init = dragInitialStateRef.current.nodes.find(i => i.id === n.id);
+          return init && (init.width !== n.width || init.height !== n.height);
+        });
+        if (hasResized) {
+          pushHistory(dragInitialStateRef.current.nodes, dragInitialStateRef.current.connections);
+        }
+        dragInitialStateRef.current = null;
+      }
+      setResizingNode(null);
+    }
   };
 
   const handleNodeMouseUp = (e, targetNode) => {
@@ -670,6 +861,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
         toHandle = y > 0 ? 'bottom' : 'top';
       }
 
+      pushHistory();
       setConnections([
         ...connections, 
         { 
@@ -690,12 +882,15 @@ const ProjectWorkspace = ({ project, onBack }) => {
   };
 
   const deleteNode = (e, id) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
+    pushHistory();
     setNodes(nodes.filter(n => n.id !== id));
     setConnections(connections.filter(c => c.from !== id && c.to !== id));
+    setSelectedNodeIds(prev => prev.filter(selectedId => selectedId !== id));
   };
 
   const deleteConnection = (id) => {
+    pushHistory();
     setConnections(connections.filter(c => c.id !== id));
   };
 
@@ -726,6 +921,22 @@ const ProjectWorkspace = ({ project, onBack }) => {
       case 'Square': default: return { borderRadius: '8px' };
     }
   };
+
+  const selectedNodes = nodes.filter(n => selectedNodeIds.includes(n.id));
+  let selectionBounds = null;
+  if (selectedNodes.length > 1) {
+    const minX = Math.min(...selectedNodes.map(n => n.x));
+    const minY = Math.min(...selectedNodes.map(n => n.y));
+    const maxX = Math.max(...selectedNodes.map(n => n.x + (n.width || 96)));
+    const maxY = Math.max(...selectedNodes.map(n => n.y + (n.height || 96)));
+    selectionBounds = {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      count: selectedNodes.length
+    };
+  }
 
   return (
     <div className="flex h-screen bg-slate-900 text-slate-300 font-sans w-full overflow-hidden text-left relative">
@@ -923,32 +1134,56 @@ const ProjectWorkspace = ({ project, onBack }) => {
             <div className={`w-8 h-8 rounded-lg ${project.color} opacity-80`} />
             <h1 className="text-xl font-bold text-white">{project.name}</h1>
           </div>
-          <div className="ml-auto group relative pointer-events-auto flex items-center">
-            <div 
-              onWheel={(e) => {
-                e.preventDefault();
-                const zoomFactor = Math.exp(-e.deltaY * 0.0005);
-                setZoom((prevZoom) => Math.min(Math.max(0.1, prevZoom * zoomFactor), 3));
-              }}
-              className="bg-slate-800 px-4 py-2 rounded-full text-sm font-medium text-slate-300 border border-slate-700 shadow-md flex items-center gap-2 transition-all"
-            >
-              <span className="w-10 text-right">{Math.round(zoom * 100)}%</span>
-              <div className="w-0 overflow-hidden group-hover:w-32 transition-all duration-300 ease-out flex items-center ml-0 group-hover:ml-2">
-                <input 
-                  type="range" 
-                  min="0.1" 
-                  max="3" 
-                  step="0.05" 
-                  value={zoom} 
-                  onChange={(e) => setZoom(parseFloat(e.target.value))}
-                  onWheel={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const zoomFactor = Math.exp(-e.deltaY * 0.0005);
-                    setZoom((prevZoom) => Math.min(Math.max(0.1, prevZoom * zoomFactor), 3));
-                  }}
-                  className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                />
+          <div className="ml-auto pointer-events-auto flex items-center gap-2">
+            {/* Undo / Redo Controls */}
+            <div className="bg-slate-800 px-1.5 py-1 rounded-full border border-slate-700 shadow-md flex items-center gap-1">
+              <button 
+                type="button"
+                onClick={handleUndo}
+                disabled={history.past.length === 0}
+                className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 disabled:cursor-not-allowed rounded-full hover:bg-slate-700 transition-colors"
+                title="Undo (Ctrl+Z)"
+              >
+                <Undo2 size={16} />
+              </button>
+              <button 
+                type="button"
+                onClick={handleRedo}
+                disabled={history.future.length === 0}
+                className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 disabled:cursor-not-allowed rounded-full hover:bg-slate-700 transition-colors"
+                title="Redo (Ctrl+Y)"
+              >
+                <Redo2 size={16} />
+              </button>
+            </div>
+
+            <div className="group relative flex items-center">
+              <div 
+                onWheel={(e) => {
+                  e.preventDefault();
+                  const zoomFactor = Math.exp(-e.deltaY * 0.0005);
+                  setZoom((prevZoom) => Math.min(Math.max(0.1, prevZoom * zoomFactor), 3));
+                }}
+                className="bg-slate-800 px-4 py-2 rounded-full text-sm font-medium text-slate-300 border border-slate-700 shadow-md flex items-center gap-2 transition-all"
+              >
+                <span className="w-10 text-right">{Math.round(zoom * 100)}%</span>
+                <div className="w-0 overflow-hidden group-hover:w-32 transition-all duration-300 ease-out flex items-center ml-0 group-hover:ml-2">
+                  <input 
+                    type="range" 
+                    min="0.1" 
+                    max="3" 
+                    step="0.05" 
+                    value={zoom} 
+                    onChange={(e) => setZoom(parseFloat(e.target.value))}
+                    onWheel={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const zoomFactor = Math.exp(-e.deltaY * 0.0005);
+                      setZoom((prevZoom) => Math.min(Math.max(0.1, prevZoom * zoomFactor), 3));
+                    }}
+                    className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -977,7 +1212,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
                   Canvas Area
                 </div>
                 <p>Drag shapes from the bottom bar to build your flow.</p>
-                <p className="text-sm mt-2">Space + Drag to pan. Ctrl + Scroll to zoom.</p>
+                <p className="text-sm mt-2">Space + Drag to pan. Ctrl + Scroll to zoom. Delete to remove selected. Ctrl+Z / Ctrl+Y to undo/redo.</p>
               </div>
             </div>
           )}
@@ -1102,6 +1337,37 @@ const ProjectWorkspace = ({ project, onBack }) => {
               />
             )}
 
+            {/* Multi-selection Bounding Box & Group Delete */}
+            {selectionBounds && !drawingConnection && (
+              <div
+                style={{
+                  left: selectionBounds.x - 8,
+                  top: selectionBounds.y - 8,
+                  width: selectionBounds.width + 16,
+                  height: selectionBounds.height + 16,
+                }}
+                className="absolute border-2 border-dashed border-blue-400/80 bg-blue-500/5 rounded-xl pointer-events-none z-15"
+              >
+                {/* Count badge */}
+                <div className="absolute -top-3 left-2 bg-blue-600 text-white text-[11px] font-semibold px-2 py-0.5 rounded-full shadow pointer-events-none select-none">
+                  {selectionBounds.count} selected
+                </div>
+
+                {/* Close Red Button on the Selection */}
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    deleteSelectedNodes();
+                  }}
+                  className="absolute -top-3 -right-3 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-red-500 transition-all z-30 shadow-lg pointer-events-auto cursor-pointer"
+                  title={`Delete ${selectionBounds.count} selected shapes (Delete)`}
+                >
+                  <X size={12} className="text-white" />
+                </button>
+              </div>
+            )}
+
             {/* Render Nodes */}
             {nodes.map(node => {
               const isText = node.type === 'Text';
@@ -1139,6 +1405,16 @@ const ProjectWorkspace = ({ project, onBack }) => {
                     <textarea
                       value={node.text}
                       onChange={(e) => updateNodeText(node.id, e.target.value)}
+                      onFocus={(e) => {
+                        textBeforeEditRef.current = { id: node.id, text: e.target.value };
+                      }}
+                      onBlur={(e) => {
+                        if (textBeforeEditRef.current && textBeforeEditRef.current.id === node.id && textBeforeEditRef.current.text !== e.target.value) {
+                          const prevNodes = nodesRef.current.map(n => n.id === node.id ? { ...n, text: textBeforeEditRef.current.text } : { ...n });
+                          pushHistory(prevNodes, connectionsRef.current);
+                          textBeforeEditRef.current = null;
+                        }
+                      }}
                       onMouseDown={(e) => {
                         if (isSpacePressed) return;
                         e.stopPropagation();
@@ -1196,8 +1472,15 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
                 {/* Delete Button */}
                 <button 
-                  className="absolute -top-3 -right-3 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 hover:scale-110 hover:bg-red-500 transition-all z-20 shadow-lg"
-                  onMouseDown={(e) => deleteNode(e, node.id)}
+                  className={`absolute -top-3 -right-3 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-red-500 transition-all z-20 shadow-lg ${selectedNodeIds.includes(node.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    if (selectedNodeIds.includes(node.id) && selectedNodeIds.length > 1) {
+                      deleteSelectedNodes();
+                    } else {
+                      deleteNode(e, node.id);
+                    }
+                  }}
                   title="Delete node"
                 >
                   <X size={12} className="text-white" />

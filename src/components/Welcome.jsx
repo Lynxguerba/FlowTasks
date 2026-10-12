@@ -142,7 +142,6 @@ const Welcome = ({ username, onLogout, onOpenProject }) => {
             </div>
             <div>
               <div className="text-sm font-semibold text-white">{username}</div>
-              <div className="text-xs text-slate-400">Free Plan</div>
             </div>
           </div>
         </div>
