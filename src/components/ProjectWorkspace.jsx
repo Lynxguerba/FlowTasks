@@ -447,8 +447,8 @@ const ProjectWorkspace = ({ project, onBack }) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault(); // Prevent browser zoom
         setZoom((prevZoom) => {
-          const zoomAmount = e.deltaY * -0.002;
-          let newZoom = prevZoom + zoomAmount;
+          const zoomFactor = Math.exp(-e.deltaY * 0.0005);
+          const newZoom = prevZoom * zoomFactor;
           return Math.min(Math.max(0.1, newZoom), 3); // clamp between 10% and 300%
         });
       }
@@ -924,7 +924,14 @@ const ProjectWorkspace = ({ project, onBack }) => {
             <h1 className="text-xl font-bold text-white">{project.name}</h1>
           </div>
           <div className="ml-auto group relative pointer-events-auto flex items-center">
-            <div className="bg-slate-800 px-4 py-2 rounded-full text-sm font-medium text-slate-300 border border-slate-700 shadow-md flex items-center gap-2 transition-all">
+            <div 
+              onWheel={(e) => {
+                e.preventDefault();
+                const zoomFactor = Math.exp(-e.deltaY * 0.0005);
+                setZoom((prevZoom) => Math.min(Math.max(0.1, prevZoom * zoomFactor), 3));
+              }}
+              className="bg-slate-800 px-4 py-2 rounded-full text-sm font-medium text-slate-300 border border-slate-700 shadow-md flex items-center gap-2 transition-all"
+            >
               <span className="w-10 text-right">{Math.round(zoom * 100)}%</span>
               <div className="w-0 overflow-hidden group-hover:w-32 transition-all duration-300 ease-out flex items-center ml-0 group-hover:ml-2">
                 <input 
@@ -934,6 +941,12 @@ const ProjectWorkspace = ({ project, onBack }) => {
                   step="0.05" 
                   value={zoom} 
                   onChange={(e) => setZoom(parseFloat(e.target.value))}
+                  onWheel={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const zoomFactor = Math.exp(-e.deltaY * 0.0005);
+                    setZoom((prevZoom) => Math.min(Math.max(0.1, prevZoom * zoomFactor), 3));
+                  }}
                   className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
                 />
               </div>
