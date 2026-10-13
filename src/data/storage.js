@@ -72,3 +72,11 @@ export const getTodos = async (projectId) => {
 export const saveTodos = async (projectId, todos) => {
   await saveData(`project_${projectId}`, 'todos', todos);
 };
+
+export const getTrash = async (projectId) => {
+  return await fetchData(`project_${projectId}`, 'trash', []);
+};
+
+export const saveTrash = async (projectId, trash) => {
+  await saveData(`project_${projectId}`, 'trash', trash);
+};

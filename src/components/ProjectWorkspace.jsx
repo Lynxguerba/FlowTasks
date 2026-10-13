@@ -18,10 +18,11 @@ import {
   Upload,
   GripVertical,
   Undo2,
-  Redo2
+  Redo2,
+  RefreshCcw
 } from 'lucide-react';
 import { Reorder } from 'framer-motion';
-import { getNotes, saveNotes, getCanvas, saveCanvas, getTodos, saveTodos } from '../data/storage';
+import { getNotes, saveNotes, getCanvas, saveCanvas, getTodos, saveTodos, getTrash, saveTrash } from '../data/storage';
 
 const LayoutTree = ({ nodes, connections }) => {
   if (!nodes || nodes.length === 0) {
@@ -169,8 +170,22 @@ const ProjectWorkspace = ({ project, onBack }) => {
   };
 
   const handleDeleteNoteConfirm = (id) => {
+    const noteToDeleteObj = notes.find(n => n.id === id);
+    if (noteToDeleteObj) {
+      setTrash(prev => [
+        { 
+          ...noteToDeleteObj, 
+          itemType: 'note', 
+          deletedAt: new Date().toLocaleDateString() 
+        }, 
+        ...prev
+      ]);
+    }
     setNotes(notes.filter(n => n.id !== id));
-    if (editingNoteId === id) setEditingNoteId(null);
+    if (editingNoteId === id) {
+      setEditingNoteId(null);
+      closeNoteModal();
+    }
     closeDeleteModal();
   };
 
@@ -295,6 +310,17 @@ const ProjectWorkspace = ({ project, onBack }) => {
   };
   
   const handleDeleteTodoConfirm = (id) => {
+    const todoToDeleteObj = todos.find(t => t.id === id);
+    if (todoToDeleteObj) {
+      setTrash(prev => [
+        { 
+          ...todoToDeleteObj, 
+          itemType: 'todo', 
+          deletedAt: new Date().toLocaleDateString() 
+        }, 
+        ...prev
+      ]);
+    }
     setTodos(todos.filter(t => t.id !== id));
     if (editingTodoId === id) {
       setEditingTodoId(null);
@@ -307,6 +333,108 @@ const ProjectWorkspace = ({ project, onBack }) => {
     if (e) e.stopPropagation();
     setTodoToDelete(id);
     setIsDeleteTodoModalOpen(true);
+  };
+
+  // Trash State
+  const [trash, setTrash] = useState([]);
+  const [isTrashLoaded, setIsTrashLoaded] = useState(false);
+  const [trashFilter, setTrashFilter] = useState('all'); // 'all' | 'notes' | 'todos'
+  const [previewTrashItem, setPreviewTrashItem] = useState(null);
+  const [itemToPermanentDelete, setItemToPermanentDelete] = useState(null);
+  const [isPermanentDeleteModalOpen, setIsPermanentDeleteModalOpen] = useState(false);
+  const [isPermanentDeleteModalClosing, setIsPermanentDeleteModalClosing] = useState(false);
+  const [isEmptyTrashModalOpen, setIsEmptyTrashModalOpen] = useState(false);
+  const [isEmptyTrashModalClosing, setIsEmptyTrashModalClosing] = useState(false);
+
+  useEffect(() => {
+    getTrash(project.id).then(data => {
+      setTrash(data || []);
+      setIsTrashLoaded(true);
+    });
+  }, [project.id]);
+
+  const trashRef = useRef(trash);
+  useEffect(() => {
+    trashRef.current = trash;
+  }, [trash]);
+
+  useEffect(() => { 
+    if (isTrashLoaded) {
+      const timer = setTimeout(() => {
+        saveTrash(project.id, trash); 
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [trash, project.id, isTrashLoaded]);
+
+  useEffect(() => {
+    return () => {
+      if (isTrashLoaded) saveTrash(project.id, trashRef.current);
+    };
+  }, [project.id, isTrashLoaded]);
+
+  const closePermanentDeleteModal = () => {
+    setIsPermanentDeleteModalClosing(true);
+    setTimeout(() => {
+      setIsPermanentDeleteModalOpen(false);
+      setIsPermanentDeleteModalClosing(false);
+      setItemToPermanentDelete(null);
+    }, 200);
+  };
+
+  const closeEmptyTrashModal = () => {
+    setIsEmptyTrashModalClosing(true);
+    setTimeout(() => {
+      setIsEmptyTrashModalOpen(false);
+      setIsEmptyTrashModalClosing(false);
+    }, 200);
+  };
+
+  const handleRestoreItem = (item, e) => {
+    if (e) e.stopPropagation();
+    if (item.itemType === 'note') {
+      const restored = {
+        id: item.id,
+        title: item.title,
+        content: item.content,
+        date: item.date || new Date().toLocaleDateString()
+      };
+      setNotes(prev => [restored, ...prev]);
+    } else if (item.itemType === 'todo') {
+      const restored = {
+        id: item.id,
+        text: item.text,
+        completed: item.completed || false,
+        date: item.date || new Date().toLocaleDateString()
+      };
+      setTodos(prev => [restored, ...prev]);
+    }
+    setTrash(prev => prev.filter(t => !(t.id === item.id && t.itemType === item.itemType)));
+    if (previewTrashItem && previewTrashItem.id === item.id && previewTrashItem.itemType === item.itemType) {
+      setPreviewTrashItem(null);
+    }
+  };
+
+  const openPermanentDeleteModal = (item, e) => {
+    if (e) e.stopPropagation();
+    setItemToPermanentDelete(item);
+    setIsPermanentDeleteModalOpen(true);
+  };
+
+  const handlePermanentDeleteConfirm = () => {
+    if (itemToPermanentDelete) {
+      setTrash(prev => prev.filter(t => !(t.id === itemToPermanentDelete.id && t.itemType === itemToPermanentDelete.itemType)));
+      if (previewTrashItem && previewTrashItem.id === itemToPermanentDelete.id && previewTrashItem.itemType === itemToPermanentDelete.itemType) {
+        setPreviewTrashItem(null);
+      }
+    }
+    closePermanentDeleteModal();
+  };
+
+  const handleEmptyTrashConfirm = () => {
+    setTrash([]);
+    setPreviewTrashItem(null);
+    closeEmptyTrashModal();
   };
 
   // Canvas State
@@ -506,7 +634,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
 
-  const isAnyModalOpen = isNoteModalOpen || isDeleteModalOpen || isTodoModalOpen || isDeleteTodoModalOpen;
+  const isAnyModalOpen = isNoteModalOpen || isDeleteModalOpen || isTodoModalOpen || isDeleteTodoModalOpen || isPermanentDeleteModalOpen || isEmptyTrashModalOpen || !!previewTrashItem;
   const isAnyModalOpenRef = useRef(isAnyModalOpen);
   useEffect(() => {
     isAnyModalOpenRef.current = isAnyModalOpen;
@@ -958,6 +1086,13 @@ const ProjectWorkspace = ({ project, onBack }) => {
           <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'import' ? null : 'import')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'import' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="Import File Tree">
             <Upload size={20} />
           </button>
+          <div className="w-8 h-px bg-slate-700/60 my-1 self-center" />
+          <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'trash' ? null : 'trash')} className={`p-3 w-full flex justify-center rounded-xl transition-colors relative ${activeSidebarTab === 'trash' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="Trash Bin">
+            <Trash2 size={20} />
+            {trash.length > 0 && (
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-blue-500" />
+            )}
+          </button>
         </div>
       </div>
 
@@ -969,7 +1104,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
       >
         <div className="w-80 h-full flex flex-col">
           <div className="h-16 flex items-center justify-between px-6 border-b border-slate-700 flex-shrink-0">
-            <h2 className="text-lg font-bold text-white capitalize">{activeSidebarTab || ''}</h2>
+            <h2 className="text-lg font-bold text-white capitalize">{activeSidebarTab === 'trash' ? 'Trash Bin' : activeSidebarTab || ''}</h2>
             {activeSidebarTab === 'notes' && (
               <button onClick={handleCreateNote} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700 transition-colors" title="Create Note">
                 <Plus size={18} />
@@ -978,6 +1113,16 @@ const ProjectWorkspace = ({ project, onBack }) => {
             {activeSidebarTab === 'todos' && (
               <button onClick={handleCreateTodo} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700 transition-colors" title="Create Task">
                 <Plus size={18} />
+              </button>
+            )}
+            {activeSidebarTab === 'trash' && trash.length > 0 && (
+              <button 
+                onClick={() => setIsEmptyTrashModalOpen(true)} 
+                className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 px-2 py-1 rounded transition-colors font-medium flex items-center gap-1 border border-red-500/20" 
+                title="Empty Trash Bin"
+              >
+                <Trash2 size={13} />
+                Empty Trash
               </button>
             )}
           </div>
@@ -1120,6 +1265,119 @@ const ProjectWorkspace = ({ project, onBack }) => {
                     <input type="file" accept=".md" className="hidden" onChange={handleFileUpload} />
                   </label>
                 </div>
+              </div>
+            )}
+            {activeSidebarTab === 'trash' && (
+              <div className="space-y-4">
+                {trash.length === 0 ? (
+                  <div className="text-center text-slate-500 mt-10">
+                    <Trash2 size={40} className="mx-auto mb-4 opacity-50" />
+                    <p className="font-medium text-slate-400">Trash is empty</p>
+                    <p className="text-xs text-slate-500 mt-1">Deleted notes and tasks will appear here.</p>
+                  </div>
+                ) : (
+                  <div>
+                    {/* Filter pills: All, Notes, Tasks */}
+                    <div className="flex items-center gap-1.5 p-1 bg-slate-900 rounded-lg mb-3 border border-slate-700 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setTrashFilter('all')}
+                        className={`flex-1 py-1 px-2 rounded-md transition-colors font-medium ${
+                          trashFilter === 'all' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        All ({trash.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTrashFilter('notes')}
+                        className={`flex-1 py-1 px-2 rounded-md transition-colors font-medium ${
+                          trashFilter === 'notes' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        Notes ({trash.filter(t => t.itemType === 'note').length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTrashFilter('todos')}
+                        className={`flex-1 py-1 px-2 rounded-md transition-colors font-medium ${
+                          trashFilter === 'todos' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        Tasks ({trash.filter(t => t.itemType === 'todo').length})
+                      </button>
+                    </div>
+
+                    {/* List of trash items */}
+                    <div className="space-y-3">
+                      {trash
+                        .filter(item => {
+                          if (trashFilter === 'notes') return item.itemType === 'note';
+                          if (trashFilter === 'todos') return item.itemType === 'todo';
+                          return true;
+                        })
+                        .map((item, idx) => {
+                          const isNote = item.itemType === 'note';
+                          return (
+                            <div
+                              key={`${item.itemType}-${item.id}-${idx}`}
+                              onClick={() => setPreviewTrashItem(item)}
+                              className="bg-slate-900/80 rounded-xl border border-slate-700/80 p-3.5 hover:border-slate-500 transition-colors cursor-pointer group/trashitem relative overflow-hidden"
+                            >
+                              <div className="flex items-center justify-between mb-2">
+                                <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                                  isNote ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                }`}>
+                                  {isNote ? <FileText size={11} /> : <CheckSquare size={11} />}
+                                  {isNote ? 'Note' : 'Task'}
+                                </span>
+                                <div className="flex items-center gap-1 opacity-0 group-hover/trashitem:opacity-100 transition-opacity">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleRestoreItem(item, e)}
+                                    className="p-1 rounded text-emerald-400 hover:text-emerald-300 hover:bg-slate-800 transition-colors"
+                                    title="Restore item"
+                                  >
+                                    <RefreshCcw size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => openPermanentDeleteModal(item, e)}
+                                    className="p-1 rounded text-red-400 hover:text-red-300 hover:bg-slate-800 transition-colors"
+                                    title="Delete permanently"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {isNote ? (
+                                <div>
+                                  <h4 className="font-medium text-white text-sm truncate mb-1 line-through opacity-80 group-hover/trashitem:opacity-100">
+                                    {item.title || 'Untitled Note'}
+                                  </h4>
+                                  <p className="text-xs text-slate-400 line-clamp-2 mb-2 whitespace-pre-wrap">
+                                    {item.content || 'Empty note...'}
+                                  </p>
+                                </div>
+                              ) : (
+                                <div>
+                                  <p className="text-xs text-slate-300 line-through opacity-80 group-hover/trashitem:opacity-100 line-clamp-2 mb-2 whitespace-pre-wrap">
+                                    {item.text || 'Empty task...'}
+                                  </p>
+                                </div>
+                              )}
+
+                              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-800/80">
+                                <span>Deleted {item.deletedAt || item.date}</span>
+                                <span className="text-slate-600 group-hover/trashitem:text-blue-400 transition-colors">Click to view</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1562,9 +1820,20 @@ const ProjectWorkspace = ({ project, onBack }) => {
               className="w-full bg-slate-900 text-slate-300 px-4 py-3 rounded-lg mb-4 min-h-[200px] resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-700" 
               placeholder="Write your note here..." 
             />
-            <div className="flex justify-end gap-3">
-              <button onClick={handleCancelEdit} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
-              <button onClick={handleSaveNote} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg transition-colors flex items-center gap-2 font-medium"><Save size={18} /> Save Note</button>
+            <div className="flex justify-between gap-3">
+              {editingNoteId && (
+                <button 
+                  type="button"
+                  onClick={(e) => { openDeleteModal(editingNoteId, e); }} 
+                  className="px-4 py-2 text-red-400 hover:text-white hover:bg-red-600 rounded-lg transition-colors font-medium flex items-center gap-2"
+                >
+                  <Trash2 size={18} /> Delete
+                </button>
+              )}
+              <div className="flex gap-3 ml-auto">
+                <button onClick={handleCancelEdit} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
+                <button onClick={handleSaveNote} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg transition-colors flex items-center gap-2 font-medium"><Save size={18} /> Save Note</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1580,11 +1849,13 @@ const ProjectWorkspace = ({ project, onBack }) => {
             className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-sm shadow-2xl"
             style={{ animation: isDeleteModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out' }}
           >
-            <h3 className="text-lg font-bold text-white mb-2">Delete Note</h3>
-            <p className="text-slate-400 mb-6">Are you sure you want to delete this note? This action cannot be undone.</p>
+            <h3 className="text-lg font-bold text-white mb-2">Move Note to Trash</h3>
+            <p className="text-slate-400 mb-6">Are you sure you want to move this note to the trash bin? You can restore it anytime from the sidebar.</p>
             <div className="flex justify-end gap-3">
               <button onClick={closeDeleteModal} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
-              <button onClick={() => handleDeleteNoteConfirm(noteToDelete)} className="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg transition-colors font-medium">Delete</button>
+              <button onClick={() => handleDeleteNoteConfirm(noteToDelete)} className="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg transition-colors font-medium flex items-center gap-1.5">
+                <Trash2 size={16} /> Move to Trash
+              </button>
             </div>
           </div>
         </div>
@@ -1633,11 +1904,151 @@ const ProjectWorkspace = ({ project, onBack }) => {
             className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-sm shadow-2xl"
             style={{ animation: isDeleteTodoModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out' }}
           >
-            <h3 className="text-lg font-bold text-white mb-2">Delete Task</h3>
-            <p className="text-slate-400 mb-6">Are you sure you want to delete this task? This action cannot be undone.</p>
+            <h3 className="text-lg font-bold text-white mb-2">Move Task to Trash</h3>
+            <p className="text-slate-400 mb-6">Are you sure you want to move this task to the trash bin? You can restore it anytime from the sidebar.</p>
             <div className="flex justify-end gap-3">
               <button onClick={closeDeleteTodoModal} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
-              <button onClick={() => handleDeleteTodoConfirm(todoToDelete)} className="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg transition-colors font-medium">Delete</button>
+              <button onClick={() => handleDeleteTodoConfirm(todoToDelete)} className="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg transition-colors font-medium flex items-center gap-1.5">
+                <Trash2 size={16} /> Move to Trash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Permanent Delete Confirmation Modal */}
+      {(isPermanentDeleteModalOpen || isPermanentDeleteModalClosing) && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm"
+          style={{ animation: isPermanentDeleteModalClosing ? 'fadeOut 0.2s ease-out forwards' : 'fadeIn 0.2s ease-out' }}
+        >
+          <div 
+            className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-sm shadow-2xl"
+            style={{ animation: isPermanentDeleteModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out' }}
+          >
+            <h3 className="text-lg font-bold text-white mb-2">
+              Permanently Delete {itemToPermanentDelete?.itemType === 'note' ? 'Note' : 'Task'}
+            </h3>
+            <p className="text-slate-400 mb-6">
+              Are you sure you want to permanently delete this {itemToPermanentDelete?.itemType === 'note' ? 'note' : 'task'}? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button onClick={closePermanentDeleteModal} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
+              <button onClick={handlePermanentDeleteConfirm} className="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg transition-colors font-medium flex items-center gap-1.5">
+                <X size={16} /> Delete Forever
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Empty Trash Confirmation Modal */}
+      {(isEmptyTrashModalOpen || isEmptyTrashModalClosing) && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm"
+          style={{ animation: isEmptyTrashModalClosing ? 'fadeOut 0.2s ease-out forwards' : 'fadeIn 0.2s ease-out' }}
+        >
+          <div 
+            className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-sm shadow-2xl"
+            style={{ animation: isEmptyTrashModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out' }}
+          >
+            <h3 className="text-lg font-bold text-white mb-2">Empty Trash Bin</h3>
+            <p className="text-slate-400 mb-6">
+              Are you sure you want to permanently delete all {trash.length} {trash.length === 1 ? 'item' : 'items'} in the trash bin? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button onClick={closeEmptyTrashModal} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
+              <button onClick={handleEmptyTrashConfirm} className="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg transition-colors font-medium flex items-center gap-1.5">
+                <Trash2 size={16} /> Empty Trash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preview Trash Item Modal */}
+      {previewTrashItem && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4"
+          style={{ animation: 'fadeIn 0.2s ease-out' }}
+        >
+          <div 
+            className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-2xl shadow-2xl flex flex-col max-h-[85vh]"
+            style={{ animation: 'scaleUp 0.2s ease-out' }}
+          >
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-700">
+              <div className="flex items-center gap-2.5">
+                <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${
+                  previewTrashItem.itemType === 'note' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                }`}>
+                  {previewTrashItem.itemType === 'note' ? <FileText size={13} /> : <CheckSquare size={13} />}
+                  {previewTrashItem.itemType === 'note' ? 'Deleted Note' : 'Deleted Task'}
+                </span>
+                <span className="text-xs text-slate-400">Deleted {previewTrashItem.deletedAt || previewTrashItem.date}</span>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setPreviewTrashItem(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto mb-6 pr-1">
+              {previewTrashItem.itemType === 'note' ? (
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-3">
+                    {previewTrashItem.title || 'Untitled Note'}
+                  </h3>
+                  <div className="bg-slate-900/90 rounded-lg p-4 border border-slate-700/60 text-slate-300 text-sm whitespace-pre-wrap leading-relaxed min-h-[120px]">
+                    {previewTrashItem.content || <span className="italic text-slate-500">No content</span>}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="bg-slate-900/90 rounded-lg p-4 border border-slate-700/60 text-slate-300 text-base whitespace-pre-wrap leading-relaxed min-h-[100px] flex items-start gap-3">
+                    <span className="mt-0.5 text-slate-500">
+                      {previewTrashItem.completed ? <CheckCircle size={20} className="text-green-500" /> : <CircleIcon size={20} />}
+                    </span>
+                    <div className="flex-1">
+                      <p className={previewTrashItem.completed ? 'line-through text-slate-400' : 'text-white'}>
+                        {previewTrashItem.text || <span className="italic text-slate-500">Empty task</span>}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-4 border-t border-slate-700">
+              <button 
+                type="button"
+                onClick={() => {
+                  const item = previewTrashItem;
+                  setPreviewTrashItem(null);
+                  openPermanentDeleteModal(item);
+                }}
+                className="px-4 py-2 text-red-400 hover:text-white hover:bg-red-600 rounded-lg transition-colors font-medium flex items-center gap-1.5 text-sm"
+              >
+                <X size={16} /> Delete Permanently
+              </button>
+              <div className="flex items-center gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setPreviewTrashItem(null)}
+                  className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium text-sm"
+                >
+                  Close
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => handleRestoreItem(previewTrashItem)}
+                  className="px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-500 rounded-lg transition-colors flex items-center gap-1.5 font-medium text-sm shadow-lg shadow-emerald-600/20"
+                >
+                  <RefreshCcw size={16} /> Restore {previewTrashItem.itemType === 'note' ? 'Note' : 'Task'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
