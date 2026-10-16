@@ -1,14 +1,23 @@
 import { memo, useState, useCallback } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, Trash2, RefreshCcw } from 'lucide-react';
 
-const getShapeStyles = (type) => {
-  switch (type) {
-    case 'Circle': return { borderRadius: '50%' };
-    case 'Triangle': return { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' };
-    case 'Hexagon': return { clipPath: 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)' };
-    case 'Text': return { background: 'transparent', borderColor: 'transparent', boxShadow: 'none' };
-    case 'Square': default: return { borderRadius: '8px' };
+const getShapeStyles = (type, isDeleted, isCompleted) => {
+  const base = (() => {
+    switch (type) {
+      case 'Circle': return { borderRadius: '50%' };
+      case 'Triangle': return { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' };
+      case 'Hexagon': return { clipPath: 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)' };
+      case 'Text': return { background: 'transparent', borderColor: 'transparent', boxShadow: 'none' };
+      case 'Square': default: return { borderRadius: '8px' };
+    }
+  })();
+  if (isDeleted && (type === 'Triangle' || type === 'Hexagon')) {
+    return { ...base, filter: 'drop-shadow(0 0 3px #ef4444)' };
   }
+  if (isCompleted && (type === 'Triangle' || type === 'Hexagon')) {
+    return { ...base, filter: 'drop-shadow(0 0 3px #22c55e)' };
+  }
+  return base;
 };
 
 const CanvasNode = memo(({
@@ -20,6 +29,7 @@ const CanvasNode = memo(({
   onStartConnection,
   onMouseUp,
   onDelete,
+  onRestore,
   onTextChange,
   onTextFocus,
   onTextBlur,
@@ -38,10 +48,13 @@ const CanvasNode = memo(({
 
   const getBorderClasses = () => {
     if (node.isDeleted) {
-      return 'border-red-500 shadow-red-500/30';
+      return 'border-red-500 shadow-md shadow-red-500/30 ring-1 ring-red-500/60';
     }
     if (node.isRoot) {
       return 'border-slate-400 group-hover:border-slate-300';
+    }
+    if (node.isCompleted) {
+      return 'border-green-500 group-hover:border-green-400 shadow-md shadow-green-500/25 ring-1 ring-green-500/50';
     }
     if (node.nodeType === 'flow') {
       return 'border-white group-hover:border-slate-200';
@@ -74,7 +87,7 @@ const CanvasNode = memo(({
   return (
     <div
       style={nodeStyle}
-      className={`absolute group z-10 flex items-center justify-center p-4 ${nodeClass} ${isSelected ? 'ring-2 ring-blue-500 rounded-lg bg-blue-500/10' : ''} ${node.isDeleted ? 'opacity-85' : ''}`}
+      className={`absolute group z-10 flex items-center justify-center p-4 ${nodeClass} ${isSelected ? 'ring-2 ring-blue-500 rounded-lg bg-blue-500/10' : ''} ${node.isDeleted ? 'opacity-90' : ''}`}
       onMouseDown={(e) => onStartDrag(e, node)}
       onMouseUp={(e) => onMouseUp(e, node)}
       onMouseMove={handleMouseMove}
@@ -83,13 +96,13 @@ const CanvasNode = memo(({
       {/* Shape background */}
       <div 
         className={`absolute inset-0 bg-slate-800 border-2 transition-colors shadow-lg ${getBorderClasses()}`}
-        style={getShapeStyles(node.type)}
+        style={getShapeStyles(node.type, node.isDeleted, node.isCompleted)}
       />
 
       {/* Deleted Indicator Tag */}
       {node.isDeleted && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-red-600/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow pointer-events-none z-30 uppercase tracking-wider">
-          Deleted
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow pointer-events-none z-30 uppercase tracking-wider flex items-center gap-1">
+          <Trash2 size={10} /> Deleted
         </span>
       )}
       
@@ -109,8 +122,9 @@ const CanvasNode = memo(({
               if (isSpacePressed) return;
               e.stopPropagation();
             }} 
+            readOnly={node.isDeleted}
             placeholder="Type..."
-            className={`col-start-1 row-start-1 resize-none overflow-hidden bg-transparent text-center text-sm font-medium text-white focus:outline-none placeholder-slate-500 break-words whitespace-pre-wrap px-1 min-w-0 ${isResizable ? 'w-full h-full' : ''} ${node.isCompleted ? 'line-through text-slate-400' : ''}`}
+            className={`col-start-1 row-start-1 resize-none overflow-hidden bg-transparent text-center text-sm font-medium text-white focus:outline-none placeholder-slate-500 break-words whitespace-pre-wrap px-1 min-w-0 ${isResizable ? 'w-full h-full' : ''} ${node.isCompleted || node.isDeleted ? 'line-through text-slate-400' : ''}`}
             rows={1}
           />
         </div>
@@ -164,18 +178,47 @@ const CanvasNode = memo(({
         </>
       )}
 
-      {/* Delete Button (hidden for Root node and already deleted node) */}
-      {!node.isRoot && !node.isDeleted && (
-        <button 
-          className={`absolute -top-3 -right-3 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-red-500 transition-all z-20 shadow-lg ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-          onMouseDown={(e) => {
-            e.stopPropagation();
-            onDelete(e, node.id, isSelected);
-          }}
-          title="Delete node"
-        >
-          <X size={12} className="text-white" />
-        </button>
+      {/* Action Buttons (Delete, Restore, Permanent Delete) */}
+      {!node.isRoot && (
+        <div className={`absolute -top-3 -right-3 flex items-center gap-1 z-20 transition-all ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+          {node.isDeleted ? (
+            <>
+              {onRestore && (
+                <button 
+                  className="w-6 h-6 bg-emerald-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-emerald-500 transition-all shadow-lg"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    onRestore(e);
+                  }}
+                  title="Restore task from trash"
+                >
+                  <RefreshCcw size={11} className="text-white" />
+                </button>
+              )}
+              <button 
+                className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-red-500 transition-all shadow-lg"
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  onDelete(e, node.id, isSelected);
+                }}
+                title="Permanently delete node"
+              >
+                <X size={12} className="text-white" />
+              </button>
+            </>
+          ) : (
+            <button 
+              className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-red-500 transition-all shadow-lg"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                onDelete(e, node.id, isSelected);
+              }}
+              title="Delete node (move to trash)"
+            >
+              <X size={12} className="text-white" />
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
