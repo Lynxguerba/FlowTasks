@@ -4,17 +4,19 @@ import { Layout } from 'lucide-react';
 const LayoutTree = memo(({ nodes, connections }) => {
   // Pre-index nodes and connections for O(1) lookups and O(N + M) complexity
   const trees = useMemo(() => {
-    if (!nodes || nodes.length === 0) return null;
+    const activeNodes = (nodes || []).filter(n => !n.isDeleted);
+    if (activeNodes.length === 0) return null;
 
     const nodesMap = new Map();
-    for (let i = 0; i < nodes.length; i++) {
-      nodesMap.set(nodes[i].id, nodes[i]);
+    for (let i = 0; i < activeNodes.length; i++) {
+      nodesMap.set(activeNodes[i].id, activeNodes[i]);
     }
 
     const incomingEdges = new Set();
     const connectionsByFrom = new Map();
     for (let i = 0; i < connections.length; i++) {
       const c = connections[i];
+      if (!nodesMap.has(c.from) || !nodesMap.has(c.to)) continue;
       incomingEdges.add(c.to);
       let list = connectionsByFrom.get(c.from);
       if (!list) {
@@ -24,8 +26,8 @@ const LayoutTree = memo(({ nodes, connections }) => {
       list.push(c);
     }
 
-    const rootNodes = nodes.filter(n => !incomingEdges.has(n.id));
-    const startNodes = rootNodes.length > 0 ? rootNodes : [nodes[0]];
+    const rootNodes = activeNodes.filter(n => !incomingEdges.has(n.id));
+    const startNodes = rootNodes.length > 0 ? rootNodes : [activeNodes[0]];
     const allVisited = new Set();
     
     const renderTree = (node, visitedPath = new Set()) => {
@@ -70,7 +72,7 @@ const LayoutTree = memo(({ nodes, connections }) => {
       treeList.push(renderTree(node, new Set(), idx === startNodes.length - 1));
     });
 
-    nodes.forEach(node => {
+    activeNodes.forEach(node => {
       if (!allVisited.has(node.id)) {
         treeList.push(renderTree(node, new Set(), true));
       }

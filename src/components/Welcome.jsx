@@ -85,7 +85,8 @@ const Welcome = ({ username, onLogout, onOpenProject }) => {
         name: projectNameInput.trim(),
         date: 'Just now',
         color: randomColor,
-        isTrash: false
+        isTrash: false,
+        isNewWorkflow: true
       };
       
       setProjects([newProject, ...projects]);

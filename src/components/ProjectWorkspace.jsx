@@ -21,7 +21,13 @@ import {
   Redo2, 
   RefreshCcw,
   Copy,
-  ClipboardPaste 
+  ClipboardPaste,
+  GitBranch,
+  Sparkles,
+  Star,
+  ChevronDown,
+  Unlink,
+  Link2
 } from 'lucide-react';
 import { Reorder } from 'framer-motion';
 import { getNotes, saveNotes, getCanvas, saveCanvas, getTodos, saveTodos, getTrash, saveTrash } from '../data/storage';
@@ -33,8 +39,250 @@ import SelectionBox from './SelectionBox';
 import SelectionBounds from './SelectionBounds';
 
 const ProjectWorkspace = ({ project, onBack }) => {
-  const [activeSidebarTab, setActiveSidebarTab] = useState('notes'); 
+  if (!project) return null;
+
+  const [activeSidebarTab, setActiveSidebarTab] = useState('todos'); 
+
+  // Canvas State
+  const [nodes, setNodes] = useState([]);
+  const [connections, setConnections] = useState([]);
+  const [isCanvasLoaded, setIsCanvasLoaded] = useState(false);
+  const [selectedNodeIds, setSelectedNodeIds] = useState([]);
   
+  // History State for Canvas (Undo / Redo)
+  const [history, setHistory] = useState({ past: [], future: [] });
+
+  const nodesRef = useRef(nodes);
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  const connectionsRef = useRef(connections);
+  useEffect(() => {
+    connectionsRef.current = connections;
+  }, [connections]);
+
+  const selectedNodeIdsRef = useRef(selectedNodeIds);
+  useEffect(() => {
+    selectedNodeIdsRef.current = selectedNodeIds;
+  }, [selectedNodeIds]);
+
+  const dragInitialStateRef = useRef(null);
+  const textBeforeEditRef = useRef(null);
+
+  const pushHistory = useCallback((pastNodes = nodesRef.current, pastConnections = connectionsRef.current) => {
+    const nodesClone = pastNodes.map(n => ({ ...n }));
+    const connsClone = pastConnections.map(c => ({ ...c }));
+    setHistory(curr => ({
+      past: [...curr.past.slice(-30), { nodes: nodesClone, connections: connsClone }],
+      future: []
+    }));
+  }, []);
+
+  // Hierarchical Workflow Auto-Alignment Algorithm
+  const autoAlignWorkflow = useCallback((currentNodes, currentConns) => {
+    if (!currentNodes || currentNodes.length === 0) return { nodes: currentNodes, connections: currentConns };
+
+    const activeNodes = currentNodes.filter(n => !n.isDeleted);
+    const activeNodeIds = new Set(activeNodes.map(n => n.id));
+    const activeConns = (currentConns || []).filter(c => activeNodeIds.has(c.from) && activeNodeIds.has(c.to));
+    
+    const nodeMap = new Map();
+    activeNodes.forEach(n => nodeMap.set(n.id, n));
+
+    const incomingCount = new Map();
+    const childrenMap = new Map();
+    activeNodes.forEach(n => {
+      incomingCount.set(n.id, 0);
+      childrenMap.set(n.id, []);
+    });
+
+    activeConns.forEach(c => {
+      incomingCount.set(c.to, (incomingCount.get(c.to) || 0) + 1);
+      childrenMap.get(c.from).push(c.to);
+    });
+
+    let rootNodes = activeNodes.filter(n => n.isRoot);
+    if (rootNodes.length === 0) {
+      rootNodes = activeNodes.filter(n => incomingCount.get(n.id) === 0);
+    }
+    if (rootNodes.length === 0 && activeNodes.length > 0) {
+      rootNodes = [activeNodes[0]];
+    }
+
+    const subtreeWidthCache = new Map();
+    const getSubtreeWidth = (nodeId, visited = new Set()) => {
+      if (visited.has(nodeId)) return 0;
+      if (subtreeWidthCache.has(nodeId)) return subtreeWidthCache.get(nodeId);
+      visited.add(nodeId);
+      
+      const node = nodeMap.get(nodeId);
+      if (!node) return 0;
+      const nodeW = node.width || 120;
+      const hGap = 60;
+      const children = (childrenMap.get(nodeId) || []).filter(cId => !visited.has(cId));
+      
+      let width = 0;
+      if (children.length === 0) {
+        width = nodeW + hGap;
+      } else {
+        let sumChildW = 0;
+        for (const cId of children) {
+          sumChildW += getSubtreeWidth(cId, new Set(visited));
+        }
+        width = Math.max(nodeW + hGap, sumChildW);
+      }
+      subtreeWidthCache.set(nodeId, width);
+      return width;
+    };
+
+    const positions = new Map();
+    const visitedForLayout = new Set();
+
+    const layoutNode = (nodeId, leftX, topY) => {
+      if (visitedForLayout.has(nodeId)) return;
+      visitedForLayout.add(nodeId);
+      const node = nodeMap.get(nodeId);
+      if (!node) return;
+
+      const nodeW = node.width || 120;
+      const nodeH = node.height || (node.type === 'Circle' ? 120 : 80);
+      const subW = getSubtreeWidth(nodeId);
+
+      const posX = leftX + (subW - nodeW) / 2;
+      const posY = topY;
+      positions.set(nodeId, { x: Math.round(posX), y: Math.round(posY) });
+
+      const children = (childrenMap.get(nodeId) || []).filter(cId => !visitedForLayout.has(cId));
+      if (children.length > 0) {
+        const childTotalW = children.reduce((acc, cId) => acc + getSubtreeWidth(cId), 0);
+        let curChildLeft = leftX;
+        if (subW > childTotalW) {
+          curChildLeft += (subW - childTotalW) / 2;
+        }
+        const vGap = 120;
+        const childTopY = posY + nodeH + vGap;
+
+        for (const cId of children) {
+          const cW = getSubtreeWidth(cId);
+          layoutNode(cId, curChildLeft, childTopY);
+          curChildLeft += cW;
+        }
+      }
+    };
+
+    let curTreeLeft = 100;
+    rootNodes.forEach(r => {
+      if (!visitedForLayout.has(r.id)) {
+        layoutNode(r.id, curTreeLeft, 80);
+        curTreeLeft += getSubtreeWidth(r.id) + 80;
+      }
+    });
+
+    activeNodes.forEach(n => {
+      if (!visitedForLayout.has(n.id)) {
+        layoutNode(n.id, curTreeLeft, 80);
+        curTreeLeft += getSubtreeWidth(n.id) + 80;
+      }
+    });
+
+    let maxActiveX = 400;
+    positions.forEach(pos => {
+      if (pos.x > maxActiveX) maxActiveX = pos.x;
+    });
+
+    let deletedOffsetY = 80;
+    const deletedX = maxActiveX + 260;
+
+    const updatedNodes = currentNodes.map(n => {
+      if (n.isDeleted) {
+        const prevX = n.x;
+        if (prevX < maxActiveX + 150) {
+          const y = deletedOffsetY;
+          deletedOffsetY += (n.height || 96) + 30;
+          return { ...n, x: deletedX, y };
+        }
+        return n;
+      }
+      const pos = positions.get(n.id);
+      if (pos) {
+        return { ...n, x: pos.x, y: pos.y };
+      }
+      return n;
+    });
+
+    const updatedConns = currentConns.map(c => {
+      if (activeNodeIds.has(c.from) && activeNodeIds.has(c.to)) {
+        return { ...c, fromHandle: 'bottom', toHandle: 'top' };
+      }
+      return c;
+    });
+
+    return { nodes: updatedNodes, connections: updatedConns };
+  }, []);
+
+  useEffect(() => {
+    getCanvas(project.id).then(initialCanvas => {
+      let initialNodes = initialCanvas.nodes || [];
+      let initialConnections = initialCanvas.connections || [];
+
+      // For new projects or empty canvas: auto-create the root node with project title
+      if (initialNodes.length === 0) {
+        const title = project.name || 'Project';
+        const baseWidth = 120;
+        const maxWidth = 240;
+        const charWidth = 8;
+        const estimatedTextWidth = title.length * charWidth;
+        const circleWidth = Math.min(maxWidth, Math.max(baseWidth, estimatedTextWidth + 40));
+        const innerWidth = maxWidth - 40;
+        const estimatedLines = Math.max(1, Math.ceil(estimatedTextWidth / innerWidth));
+        const circleHeight = Math.max(120, estimatedLines * 24 + 60);
+
+        const rootNode = {
+          id: 'root-' + project.id,
+          type: 'Circle',
+          nodeType: 'flow',
+          isRoot: true,
+          text: title,
+          width: circleWidth,
+          height: circleHeight,
+          x: 450 - circleWidth / 2,
+          y: 80
+        };
+        initialNodes = [rootNode];
+      }
+
+      setNodes(initialNodes);
+      setConnections(initialConnections);
+      setIsCanvasLoaded(true);
+      setHistory({ past: [], future: [] });
+    });
+  }, [project.id, project.name]);
+
+  // Debounced auto-save for canvas to prevent hammering the network and disk during dragging
+  const canvasSaveTimerRef = useRef(null);
+  const pendingCanvasDataRef = useRef(null);
+
+  useEffect(() => {
+    if (!isCanvasLoaded) return;
+    pendingCanvasDataRef.current = { nodes, connections };
+    if (canvasSaveTimerRef.current) {
+      clearTimeout(canvasSaveTimerRef.current);
+    }
+    canvasSaveTimerRef.current = setTimeout(() => {
+      if (pendingCanvasDataRef.current) {
+        saveCanvas(project.id, pendingCanvasDataRef.current);
+        pendingCanvasDataRef.current = null;
+      }
+    }, 400);
+
+    return () => {
+      if (canvasSaveTimerRef.current) {
+        clearTimeout(canvasSaveTimerRef.current);
+      }
+    };
+  }, [nodes, connections, project.id, isCanvasLoaded]);
+
   // Trash State
   const [trash, setTrash] = useState([]);
   const [isTrashLoaded, setIsTrashLoaded] = useState(false);
@@ -204,6 +452,10 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   const [editingTodoId, setEditingTodoId] = useState(null);
   const [todoInput, setTodoInput] = useState('');
+  const [todoNodeType, setTodoNodeType] = useState('task'); // 'task' | 'flow'
+  const [todoShape, setTodoShape] = useState('Square'); // 'Square' | 'Circle' | 'Triangle' | 'Hexagon' | 'Text'
+  const [todoConnectTo, setTodoConnectTo] = useState(''); // parent node id
+  const [navParentId, setNavParentId] = useState(null); // id of node currently navigated into
   
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isTodoModalClosing, setIsTodoModalClosing] = useState(false);
@@ -229,64 +481,208 @@ const ProjectWorkspace = ({ project, onBack }) => {
   }, []);
 
   const handleCreateTodo = useCallback(() => {
-    const newTodo = { id: Date.now(), text: '', completed: false, date: new Date().toLocaleDateString() };
-    setTodos(prev => [newTodo, ...prev]);
-    setEditingTodoId(newTodo.id);
+    const activeNodes = (nodesRef.current || []).filter(n => !n.isDeleted);
+    const rootNode = activeNodes.find(n => n.isRoot);
+    const defaultParent = rootNode ? rootNode.id : (activeNodes[0]?.id || '');
+
+    setEditingTodoId(null);
     setTodoInput('');
+    setTodoNodeType('task');
+    setTodoShape('Square');
+    setTodoConnectTo(defaultParent);
+    setNavParentId(defaultParent || null);
     setActiveSidebarTab('todos');
     setIsTodoModalOpen(true);
   }, []);
 
   const handleCancelEditTodo = useCallback(() => {
-    const todo = todosRef.current.find(t => t.id === editingTodoId);
-    if (todo && !todo.text) {
-      setTodos(prev => prev.filter(t => t.id !== editingTodoId));
-    }
     setEditingTodoId(null);
     closeTodoModal();
-  }, [editingTodoId, closeTodoModal]);
+  }, [closeTodoModal]);
 
   const handleSaveTodo = useCallback(() => {
-    if (!todoInput.trim()) {
+    const trimmed = todoInput.trim();
+    if (!trimmed) {
       handleCancelEditTodo();
       return;
     }
-    setTodos(prev => prev.map(t => t.id === editingTodoId ? { ...t, text: todoInput } : t));
+
+    pushHistory();
+
+    if (editingTodoId) {
+      setTodos(prev => prev.map(t => t.id === editingTodoId ? { 
+        ...t, 
+        text: trimmed, 
+        nodeType: todoNodeType, 
+        shape: todoShape, 
+        connectTo: todoConnectTo 
+      } : t));
+
+      const updatedNodes = nodesRef.current.map(n => n.id === editingTodoId ? {
+        ...n,
+        text: trimmed,
+        type: todoShape,
+        nodeType: todoNodeType
+      } : n);
+
+      const remainingConns = connectionsRef.current.filter(c => c.to !== editingTodoId);
+      const updatedConns = [...remainingConns];
+      if (todoConnectTo && todoConnectTo !== editingTodoId) {
+        updatedConns.push({
+          id: 'conn-' + Date.now().toString(),
+          from: todoConnectTo,
+          fromHandle: 'bottom',
+          to: editingTodoId,
+          toHandle: 'top'
+        });
+      }
+
+      const aligned = autoAlignWorkflow(updatedNodes, updatedConns);
+      setNodes(aligned.nodes);
+      setConnections(aligned.connections);
+    } else {
+      const newId = Date.now().toString();
+      
+      let nodeW = 140;
+      let nodeH = 80;
+      if (todoShape === 'Circle') {
+        nodeW = Math.min(240, Math.max(120, trimmed.length * 8));
+        nodeH = Math.max(120, Math.ceil((trimmed.length * 8) / 200) * 24 + 60);
+      } else if (todoShape === 'Square') {
+        nodeW = Math.min(260, Math.max(140, trimmed.length * 7));
+        nodeH = Math.max(80, Math.ceil((trimmed.length * 7) / 220) * 22 + 40);
+      } else if (todoShape === 'Triangle' || todoShape === 'Hexagon') {
+        nodeW = 110;
+        nodeH = 110;
+      }
+
+      const newNode = {
+        id: newId,
+        type: todoShape,
+        nodeType: todoNodeType,
+        text: trimmed,
+        width: nodeW,
+        height: nodeH,
+        x: 0,
+        y: 0
+      };
+
+      const newTodo = {
+        id: newId,
+        text: trimmed,
+        nodeType: todoNodeType,
+        shape: todoShape,
+        completed: false,
+        date: new Date().toLocaleDateString(),
+        connectTo: todoConnectTo
+      };
+
+      const newConns = [...connectionsRef.current];
+      if (todoConnectTo) {
+        newConns.push({
+          id: 'conn-' + Date.now().toString(),
+          from: todoConnectTo,
+          fromHandle: 'bottom',
+          to: newId,
+          toHandle: 'top'
+        });
+      }
+
+      const aligned = autoAlignWorkflow([...nodesRef.current, newNode], newConns);
+      setTodos(prev => [newTodo, ...prev]);
+      setNodes(aligned.nodes);
+      setConnections(aligned.connections);
+    }
+
     setEditingTodoId(null);
     closeTodoModal();
-  }, [editingTodoId, todoInput, handleCancelEditTodo, closeTodoModal]);
+  }, [todoInput, editingTodoId, todoNodeType, todoShape, todoConnectTo, pushHistory, autoAlignWorkflow, handleCancelEditTodo, closeTodoModal]);
 
   const handleEditTodo = useCallback((todo, e) => {
     if (e) e.stopPropagation();
+    const matchedNode = nodesRef.current.find(n => n.id === todo.id);
+    const inConn = connectionsRef.current.find(c => c.to === todo.id);
+    const parentId = inConn ? inConn.from : (todo.connectTo || '');
+
     setEditingTodoId(todo.id);
-    setTodoInput(todo.text);
+    setTodoInput(todo.text || '');
+    setTodoNodeType(todo.nodeType || matchedNode?.nodeType || 'task');
+    setTodoShape(todo.shape || matchedNode?.type || 'Square');
+    setTodoConnectTo(parentId);
+    setNavParentId(parentId || null);
     setIsTodoModalOpen(true);
   }, []);
 
   const toggleTodoCompletion = useCallback((id, e) => {
     if (e) e.stopPropagation();
     setTodos(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, isCompleted: !n.isCompleted } : n));
   }, []);
   
   const handleDeleteTodoConfirm = useCallback((id) => {
-    const todoToDeleteObj = todosRef.current.find(t => t.id === id);
-    if (todoToDeleteObj) {
-      setTrash(prev => [
-        { 
-          ...todoToDeleteObj, 
-          itemType: 'todo', 
-          deletedAt: new Date().toLocaleDateString() 
-        }, 
-        ...prev
-      ]);
+    const nodeToDelete = nodesRef.current.find(n => n.id === id);
+    if (nodeToDelete && nodeToDelete.isRoot) {
+      closeDeleteTodoModal();
+      return;
     }
+
+    pushHistory();
+
+    const todoToDeleteObj = todosRef.current.find(t => t.id === id);
+    const incoming = connectionsRef.current.filter(c => c.to === id);
+    const outgoing = connectionsRef.current.filter(c => c.from === id);
+
+    // Save to trash
+    const trashEntry = {
+      id: id,
+      itemType: 'todo',
+      text: todoToDeleteObj ? todoToDeleteObj.text : (nodeToDelete?.text || ''),
+      nodeType: todoToDeleteObj ? todoToDeleteObj.nodeType : (nodeToDelete?.nodeType || 'task'),
+      shape: todoToDeleteObj ? todoToDeleteObj.shape : (nodeToDelete?.type || 'Square'),
+      completed: todoToDeleteObj ? todoToDeleteObj.completed : false,
+      date: todoToDeleteObj ? todoToDeleteObj.date : new Date().toLocaleDateString(),
+      deletedAt: new Date().toLocaleDateString(),
+      incomingParents: incoming.map(c => c.from),
+      outgoingChildren: outgoing.map(c => c.to)
+    };
+    setTrash(prev => [trashEntry, ...prev]);
+
+    // Remove from active todos
     setTodos(prev => prev.filter(t => t.id !== id));
+
+    // Mark node as deleted on canvas (turns border RED)
+    const updatedNodes = nodesRef.current.map(n => n.id === id ? { ...n, isDeleted: true } : n);
+
+    // Auto-bypass connections: parent => deleted => child becomes parent => child
+    const newBypassConns = [];
+    incoming.forEach(inC => {
+      outgoing.forEach(outC => {
+        if (inC.from !== outC.to) {
+          newBypassConns.push({
+            id: 'bypass-' + Date.now() + Math.random().toString(36).substr(2, 6),
+            from: inC.from,
+            fromHandle: 'bottom',
+            to: outC.to,
+            toHandle: 'top'
+          });
+        }
+      });
+    });
+
+    const filteredConns = connectionsRef.current.filter(c => c.to !== id && c.from !== id);
+    const updatedConns = [...filteredConns, ...newBypassConns];
+
+    // Re-align remaining active workflow
+    const aligned = autoAlignWorkflow(updatedNodes, updatedConns);
+    setNodes(aligned.nodes);
+    setConnections(aligned.connections);
+
     if (editingTodoId === id) {
       setEditingTodoId(null);
       closeTodoModal();
     }
     closeDeleteTodoModal();
-  }, [editingTodoId, closeTodoModal, closeDeleteTodoModal]);
+  }, [pushHistory, autoAlignWorkflow, editingTodoId, closeTodoModal, closeDeleteTodoModal]);
 
   const openDeleteTodoModal = useCallback((id, e) => {
     if (e) e.stopPropagation();
@@ -313,6 +709,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   const handleRestoreItem = (item, e) => {
     if (e) e.stopPropagation();
+    pushHistory();
     if (item.itemType === 'note') {
       const restored = {
         id: item.id,
@@ -325,10 +722,52 @@ const ProjectWorkspace = ({ project, onBack }) => {
       const restored = {
         id: item.id,
         text: item.text,
+        nodeType: item.nodeType || 'task',
+        shape: item.shape || 'Square',
         completed: item.completed || false,
         date: item.date || new Date().toLocaleDateString()
       };
-      setTodos(prev => [restored, ...prev]);
+      setTodos(prev => [...prev, restored]);
+
+      // Restore node on canvas
+      const updatedNodes = nodesRef.current.map(n => n.id === item.id ? { ...n, isDeleted: false } : n);
+
+      // Remove bypass connections that were made between parents and children
+      const incomingParents = item.incomingParents || [];
+      const outgoingChildren = item.outgoingChildren || [];
+
+      let restoredConns = connectionsRef.current.filter(c => {
+        if (incomingParents.includes(c.from) && outgoingChildren.includes(c.to)) {
+          return false;
+        }
+        return true;
+      });
+
+      // Reconnect parent => restoredNode
+      incomingParents.forEach(parentId => {
+        restoredConns.push({
+          id: 'restored-p-' + Date.now() + Math.random().toString(36).substr(2, 5),
+          from: parentId,
+          fromHandle: 'bottom',
+          to: item.id,
+          toHandle: 'top'
+        });
+      });
+
+      // Reconnect restoredNode => child
+      outgoingChildren.forEach(childId => {
+        restoredConns.push({
+          id: 'restored-c-' + Date.now() + Math.random().toString(36).substr(2, 5),
+          from: item.id,
+          fromHandle: 'bottom',
+          to: childId,
+          toHandle: 'top'
+        });
+      });
+
+      const aligned = autoAlignWorkflow(updatedNodes, restoredConns);
+      setNodes(aligned.nodes);
+      setConnections(aligned.connections);
     }
     setTrash(prev => prev.filter(t => !(t.id === item.id && t.itemType === item.itemType)));
     setPreviewTrashItem(prev => (prev && prev.id === item.id && prev.itemType === item.itemType ? null : prev));
@@ -342,6 +781,10 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   const handlePermanentDeleteConfirm = () => {
     if (itemToPermanentDelete) {
+      if (itemToPermanentDelete.itemType === 'todo') {
+        setNodes(prev => prev.filter(n => n.id !== itemToPermanentDelete.id));
+        setConnections(prev => prev.filter(c => c.from !== itemToPermanentDelete.id && c.to !== itemToPermanentDelete.id));
+      }
       setTrash(prev => prev.filter(t => !(t.id === itemToPermanentDelete.id && t.itemType === itemToPermanentDelete.itemType)));
       setPreviewTrashItem(prev => (prev && prev.id === itemToPermanentDelete.id && prev.itemType === itemToPermanentDelete.itemType ? null : prev));
     }
@@ -350,69 +793,10 @@ const ProjectWorkspace = ({ project, onBack }) => {
 
   const handleEmptyTrashConfirm = () => {
     setTrash([]);
+    setNodes(prev => prev.filter(n => !n.isDeleted));
     setPreviewTrashItem(null);
     closeEmptyTrashModal();
   };
-
-  // Canvas State
-  const [nodes, setNodes] = useState([]);
-  const [connections, setConnections] = useState([]);
-  const [isCanvasLoaded, setIsCanvasLoaded] = useState(false);
-  const [selectedNodeIds, setSelectedNodeIds] = useState([]);
-  
-  // History State for Canvas (Undo / Redo)
-  const [history, setHistory] = useState({ past: [], future: [] });
-
-  const nodesRef = useRef(nodes);
-  useEffect(() => {
-    nodesRef.current = nodes;
-  }, [nodes]);
-
-  const connectionsRef = useRef(connections);
-  useEffect(() => {
-    connectionsRef.current = connections;
-  }, [connections]);
-
-  const selectedNodeIdsRef = useRef(selectedNodeIds);
-  useEffect(() => {
-    selectedNodeIdsRef.current = selectedNodeIds;
-  }, [selectedNodeIds]);
-
-  const dragInitialStateRef = useRef(null);
-  const textBeforeEditRef = useRef(null);
-
-  useEffect(() => {
-    getCanvas(project.id).then(initialCanvas => {
-      setNodes(initialCanvas.nodes || []);
-      setConnections(initialCanvas.connections || []);
-      setIsCanvasLoaded(true);
-      setHistory({ past: [], future: [] });
-    });
-  }, [project.id]);
-
-  // Debounced auto-save for canvas to prevent hammering the network and disk during dragging
-  const canvasSaveTimerRef = useRef(null);
-  const pendingCanvasDataRef = useRef(null);
-
-  useEffect(() => {
-    if (!isCanvasLoaded) return;
-    pendingCanvasDataRef.current = { nodes, connections };
-    if (canvasSaveTimerRef.current) {
-      clearTimeout(canvasSaveTimerRef.current);
-    }
-    canvasSaveTimerRef.current = setTimeout(() => {
-      if (pendingCanvasDataRef.current) {
-        saveCanvas(project.id, pendingCanvasDataRef.current);
-        pendingCanvasDataRef.current = null;
-      }
-    }, 400);
-
-    return () => {
-      if (canvasSaveTimerRef.current) {
-        clearTimeout(canvasSaveTimerRef.current);
-      }
-    };
-  }, [nodes, connections, project.id, isCanvasLoaded]);
 
   // Flush pending changes on unmount
   useEffect(() => {
@@ -425,15 +809,6 @@ const ProjectWorkspace = ({ project, onBack }) => {
       }
     };
   }, [project.id, isNotesLoaded, isTodosLoaded, isTrashLoaded, isCanvasLoaded]);
-
-  const pushHistory = useCallback((pastNodes = nodesRef.current, pastConnections = connectionsRef.current) => {
-    const nodesClone = pastNodes.map(n => ({ ...n }));
-    const connsClone = pastConnections.map(c => ({ ...c }));
-    setHistory(curr => ({
-      past: [...curr.past.slice(-30), { nodes: nodesClone, connections: connsClone }],
-      future: []
-    }));
-  }, []);
 
   const handleUndo = useCallback(() => {
     setHistory(curr => {
@@ -550,25 +925,100 @@ const ProjectWorkspace = ({ project, onBack }) => {
     return new Set(selectedNodeIds);
   }, [selectedNodeIds]);
 
+  // Directional Flow Navigator Computations for Modal Connect To Node
+  const activeModalNodes = useMemo(() => {
+    return nodes.filter(n => !n.isDeleted && n.id !== editingTodoId);
+  }, [nodes, editingTodoId]);
+
+  const activeModalNodesMap = useMemo(() => {
+    const map = new Map();
+    activeModalNodes.forEach(n => map.set(n.id, n));
+    return map;
+  }, [activeModalNodes]);
+
+  const modalChildrenMap = useMemo(() => {
+    const map = new Map();
+    connections.forEach(c => {
+      if (activeModalNodesMap.has(c.from) && activeModalNodesMap.has(c.to)) {
+        if (!map.has(c.from)) map.set(c.from, []);
+        map.get(c.from).push(activeModalNodesMap.get(c.to));
+      }
+    });
+    return map;
+  }, [connections, activeModalNodesMap]);
+
+  const modalParentMap = useMemo(() => {
+    const map = new Map();
+    connections.forEach(c => {
+      if (activeModalNodesMap.has(c.from) && activeModalNodesMap.has(c.to)) {
+        map.set(c.to, activeModalNodesMap.get(c.from));
+      }
+    });
+    return map;
+  }, [connections, activeModalNodesMap]);
+
+  const rootModalNode = useMemo(() => {
+    return activeModalNodes.find(n => n.isRoot) || activeModalNodes[0] || null;
+  }, [activeModalNodes]);
+
+  const currentNavNode = useMemo(() => {
+    if (navParentId && activeModalNodesMap.has(navParentId)) {
+      return activeModalNodesMap.get(navParentId);
+    }
+    return rootModalNode;
+  }, [navParentId, activeModalNodesMap, rootModalNode]);
+
+  const parentOfCurrentNav = useMemo(() => {
+    if (!currentNavNode) return null;
+    return modalParentMap.get(currentNavNode.id) || (currentNavNode.id !== rootModalNode?.id ? rootModalNode : null);
+  }, [currentNavNode, modalParentMap, rootModalNode]);
+
+  const navBreadcrumbs = useMemo(() => {
+    if (!currentNavNode) return [];
+    const path = [];
+    let curr = currentNavNode;
+    const visited = new Set();
+    while (curr && !visited.has(curr.id)) {
+      visited.add(curr.id);
+      path.unshift(curr);
+      if (curr.id === rootModalNode?.id) break;
+      curr = modalParentMap.get(curr.id) || (curr !== rootModalNode ? rootModalNode : null);
+    }
+    return path;
+  }, [currentNavNode, rootModalNode, modalParentMap]);
+
+  const navChildren = useMemo(() => {
+    if (!currentNavNode) return [];
+    let direct = modalChildrenMap.get(currentNavNode.id) || [];
+    if (currentNavNode.isRoot) {
+      const directSet = new Set(direct.map(d => d.id));
+      const otherTopLevel = activeModalNodes.filter(n => !n.isRoot && !modalParentMap.has(n.id) && !directSet.has(n.id));
+      direct = [...direct, ...otherTopLevel];
+    }
+    return direct;
+  }, [currentNavNode, modalChildrenMap, activeModalNodes, modalParentMap]);
+
   const deleteSelectedNodes = useCallback(() => {
     const ids = selectedNodeIdsRef.current;
     if (!ids || ids.length === 0) return;
-    pushHistory();
-    const idsToDelete = new Set(ids);
-    setNodes(prev => prev.filter(n => !idsToDelete.has(n.id)));
-    setConnections(prev => prev.filter(c => !idsToDelete.has(c.from) && !idsToDelete.has(c.to)));
+    ids.forEach(id => {
+      const targetNode = nodesRef.current.find(n => n.id === id);
+      if (targetNode && !targetNode.isRoot) {
+        handleDeleteTodoConfirm(id);
+      }
+    });
     setSelectedNodeIds([]);
     selectedNodeIdsRef.current = [];
-  }, [pushHistory]);
+  }, [handleDeleteTodoConfirm]);
 
   const deleteNode = useCallback((e, id) => {
     if (e) e.stopPropagation();
-    pushHistory();
-    setNodes(prev => prev.filter(n => n.id !== id));
-    setConnections(prev => prev.filter(c => c.from !== id && c.to !== id));
+    const targetNode = nodesRef.current.find(n => n.id === id);
+    if (!targetNode || targetNode.isRoot) return;
+    handleDeleteTodoConfirm(id);
     setSelectedNodeIds(prev => prev.filter(selectedId => selectedId !== id));
     selectedNodeIdsRef.current = selectedNodeIdsRef.current.filter(selectedId => selectedId !== id);
-  }, [pushHistory]);
+  }, [handleDeleteTodoConfirm]);
 
   const handleDeleteNode = useCallback((e, id, isSelected) => {
     if (e) e.stopPropagation();
@@ -585,7 +1035,29 @@ const ProjectWorkspace = ({ project, onBack }) => {
   }, [pushHistory]);
 
   const updateNodeText = useCallback((id, text) => {
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, text } : n));
+    setNodes(prev => prev.map(n => {
+      if (n.id === id) {
+        if (n.isRoot) {
+          const baseWidth = 120;
+          const maxWidth = 240;
+          const charWidth = 8;
+          const estimatedTextWidth = (text || '').length * charWidth;
+          const circleWidth = Math.min(maxWidth, Math.max(baseWidth, estimatedTextWidth + 40));
+          const innerWidth = maxWidth - 40;
+          const estimatedLines = Math.max(1, Math.ceil(estimatedTextWidth / innerWidth));
+          const circleHeight = Math.max(120, estimatedLines * 24 + 60);
+          return {
+            ...n,
+            text,
+            width: Math.max(n.width || 120, circleWidth),
+            height: Math.max(n.height || 120, circleHeight)
+          };
+        }
+        return { ...n, text };
+      }
+      return n;
+    }));
+    setTodos(prev => prev.map(t => t.id === id ? { ...t, text } : t));
   }, []);
 
   const handleTextFocus = useCallback((node, text) => {
@@ -986,17 +1458,33 @@ const ProjectWorkspace = ({ project, onBack }) => {
     const localX = (mouseX - panRef.current.x) / zoomRef.current;
     const localY = (mouseY - panRef.current.y) / zoomRef.current;
 
+    const newId = Date.now().toString();
+    const defaultNodeType = type === 'Circle' ? 'flow' : 'task';
+
     const newNode = {
-      id: Date.now().toString(),
+      id: newId,
       type,
+      nodeType: defaultNodeType,
       x: localX - 48,
       y: localY - 48,
       text: '',
       width: 96,
       height: 96
     };
+
+    const newTodo = {
+      id: newId,
+      text: '',
+      nodeType: defaultNodeType,
+      shape: type,
+      completed: false,
+      date: new Date().toLocaleDateString()
+    };
+
     pushHistory();
     setNodes(prev => [...prev, newNode]);
+    setTodos(prev => [newTodo, ...prev]);
+    setActiveSidebarTab('todos');
   }, [pushHistory]);
 
   // Node Resizing
@@ -1430,14 +1918,14 @@ const ProjectWorkspace = ({ project, onBack }) => {
           <ArrowLeft size={20} />
         </button>
         <div className="flex flex-col gap-2 w-full px-2">
+          <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'todos' ? null : 'todos')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'todos' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="Tasks & Flows (To-Do List)">
+            <CheckSquare size={20} />
+          </button>
           <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'layouts' ? null : 'layouts')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'layouts' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="Layouts">
             <Layout size={20} />
           </button>
           <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'notes' ? null : 'notes')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'notes' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="Notes">
             <FileText size={20} />
-          </button>
-          <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'todos' ? null : 'todos')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'todos' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="To-Do List">
-            <CheckSquare size={20} />
           </button>
           <button onClick={() => setActiveSidebarTab(activeSidebarTab === 'import' ? null : 'import')} className={`p-3 w-full flex justify-center rounded-xl transition-colors ${activeSidebarTab === 'import' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`} title="Import File Tree">
             <Upload size={20} />
@@ -1558,54 +2046,110 @@ const ProjectWorkspace = ({ project, onBack }) => {
                     onReorder={setTodos} 
                     className="space-y-3 list-none p-0 m-0"
                   >
-                    {todos.map(todo => (
-                      <Reorder.Item 
-                        key={todo.id} 
-                        value={todo}
-                        whileDrag={{ 
-                          scale: 1.02, 
-                          zIndex: 50, 
-                          boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5)" 
-                        }}
-                        className={`bg-slate-900 rounded-xl border ${todo.completed ? 'border-slate-800 bg-slate-900/50' : 'border-slate-700'} overflow-hidden cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none list-none relative group/todo flex flex-col`}
-                        onClick={(e) => handleEditTodo(todo, e)}
-                      >
-                        <div className="p-3 flex items-start gap-2.5">
-                          <div 
-                            className="text-slate-500 group-hover/todo:text-slate-300 p-0.5 -ml-1 mt-0.5 rounded transition-colors flex-shrink-0"
-                            title="Drag to reorder"
-                          >
-                            <GripVertical size={16} />
-                          </div>
-                          <button 
-                            type="button"
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={(e) => toggleTodoCompletion(todo.id, e)} 
-                            className={`mt-0.5 flex-shrink-0 transition-colors ${todo.completed ? 'text-green-500' : 'text-slate-400 hover:text-white'}`}
-                            title={todo.completed ? "Mark incomplete" : "Mark complete"}
-                          >
-                            {todo.completed ? <CheckCircle size={18} /> : <CircleIcon size={18} />}
-                          </button>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm whitespace-pre-wrap line-clamp-3 ${todo.completed ? 'text-slate-500 line-through' : 'text-slate-300'}`}>
-                              {todo.text || "Empty task..."}
-                            </p>
-                            <div className="text-xs text-slate-500 mt-1">{todo.date}</div>
-                          </div>
-                          <div className="flex gap-1 opacity-0 group-hover/todo:opacity-100 transition-opacity flex-shrink-0">
-                            <button 
-                              type="button"
-                              onPointerDown={(e) => e.stopPropagation()}
-                              onClick={(e) => openDeleteTodoModal(todo.id, e)} 
-                              className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-slate-700 transition-colors"
-                              title="Delete task"
+                    {todos.map(todo => {
+                      const isFlow = todo.nodeType === 'flow';
+                      const inConn = connections.find(c => c.to === todo.id);
+                      const parentNode = inConn ? nodesMap.get(inConn.from) : null;
+                      const parentLabel = parentNode 
+                        ? (parentNode.isRoot ? project.name : (parentNode.text || parentNode.type))
+                        : null;
+
+                      return (
+                        <Reorder.Item 
+                          key={todo.id} 
+                          value={todo}
+                          whileDrag={{ 
+                            scale: 1.02, 
+                            zIndex: 50, 
+                            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5)" 
+                          }}
+                          className={`bg-slate-900 rounded-xl border ${
+                            todo.completed 
+                              ? 'border-slate-800 bg-slate-900/50' 
+                              : isFlow 
+                                ? 'border-slate-600/80 hover:border-slate-400' 
+                                : 'border-slate-700 hover:border-blue-500/50'
+                          } overflow-hidden cursor-grab active:cursor-grabbing transition-colors select-none list-none relative group/todo flex flex-col`}
+                          onClick={(e) => handleEditTodo(todo, e)}
+                        >
+                          <div className="p-3 flex items-start gap-2.5">
+                            <div 
+                              className="text-slate-500 group-hover/todo:text-slate-300 p-0.5 -ml-1 mt-0.5 rounded transition-colors flex-shrink-0"
+                              title="Drag to reorder"
                             >
-                              <Trash2 size={14} />
-                            </button>
+                              <GripVertical size={16} />
+                            </div>
+
+                            {/* Task: show completed check button; Flow: no completed button */}
+                            {!isFlow ? (
+                              <button 
+                                type="button"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => toggleTodoCompletion(todo.id, e)} 
+                                className={`mt-0.5 flex-shrink-0 transition-colors ${todo.completed ? 'text-green-500' : 'text-slate-400 hover:text-white'}`}
+                                title={todo.completed ? "Mark incomplete" : "Mark complete"}
+                              >
+                                {todo.completed ? <CheckCircle size={18} /> : <CircleIcon size={18} />}
+                              </button>
+                            ) : (
+                              <div className="mt-0.5 flex-shrink-0 text-slate-300 p-0.5" title="Flow connector">
+                                <GitBranch size={16} />
+                              </div>
+                            )}
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <button
+                                  type="button"
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const nextType = isFlow ? 'task' : 'flow';
+                                    setTodos(prev => prev.map(t => t.id === todo.id ? { ...t, nodeType: nextType } : t));
+                                    setNodes(prev => prev.map(n => n.id === todo.id ? { ...n, nodeType: nextType } : n));
+                                  }}
+                                  className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded transition-all cursor-pointer hover:scale-105 ${
+                                    isFlow 
+                                      ? 'bg-slate-700/80 text-white border border-slate-500/60 hover:bg-slate-600' 
+                                      : 'bg-blue-500/15 text-blue-400 border border-blue-500/30 hover:bg-blue-500/25'
+                                  }`}
+                                  title={`Switch to ${isFlow ? 'Task' : 'Flow'}`}
+                                >
+                                  {isFlow ? 'Flow ⇄' : 'Task ⇄'}
+                                </button>
+                                {todo.shape && (
+                                  <span className="text-[10px] text-slate-500">
+                                    • {todo.shape}
+                                  </span>
+                                )}
+                              </div>
+                              <p className={`text-sm whitespace-pre-wrap line-clamp-3 ${todo.completed ? 'text-slate-500 line-through' : 'text-slate-200'}`}>
+                                {todo.text || (isFlow ? "Untitled flow..." : "Empty task...")}
+                              </p>
+                              {parentLabel && (
+                                <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+                                  <span className="text-slate-500">↳ to</span>
+                                  <span className="font-medium text-slate-300 truncate max-w-[150px]">{parentLabel}</span>
+                                </div>
+                              )}
+                              <div className="text-[10px] text-slate-500 mt-1">{todo.date}</div>
+                            </div>
+
+                            <div className="flex gap-1 opacity-0 group-hover/todo:opacity-100 transition-opacity flex-shrink-0">
+                              <button 
+                                type="button"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => openDeleteTodoModal(todo.id, e)} 
+                                className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-slate-700 transition-colors"
+                                title="Delete task"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      </Reorder.Item>
-                    ))}
+                        </Reorder.Item>
+                      );
+                    })}
                   </Reorder.Group>
                 )}
               </div>
@@ -1794,6 +2338,21 @@ const ProjectWorkspace = ({ project, onBack }) => {
                 title="Paste (Ctrl+V)"
               >
                 <ClipboardPaste size={16} />
+              </button>
+              <div className="w-px h-4 bg-slate-700 mx-0.5" />
+              <button 
+                type="button"
+                onClick={() => {
+                  const aligned = autoAlignWorkflow(nodesRef.current, connectionsRef.current);
+                  pushHistory();
+                  setNodes(aligned.nodes);
+                  setConnections(aligned.connections);
+                  showToast('Workflow auto-aligned');
+                }}
+                className="p-1.5 text-slate-400 hover:text-white rounded-full hover:bg-slate-700 transition-colors"
+                title="Auto Align Workflow"
+              >
+                <Sparkles size={16} />
               </button>
             </div>
 
@@ -2075,30 +2634,287 @@ const ProjectWorkspace = ({ project, onBack }) => {
       {/* Todo Modal */}
       {(isTodoModalOpen || isTodoModalClosing) && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
           style={{ animation: isTodoModalClosing ? 'fadeOut 0.2s ease-out forwards' : 'fadeIn 0.2s ease-out' }}
         >
           <div 
-            className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-4xl shadow-2xl flex flex-col"
-            style={{ animation: isTodoModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out', height: '85vh' }}
+            className="bg-slate-800 rounded-2xl border border-slate-700 p-6 w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto sidebar-scrollbar"
+            style={{ animation: isTodoModalClosing ? 'scaleDown 0.2s ease-out forwards' : 'scaleUp 0.2s ease-out' }}
           >
-            <h3 className="text-xl font-bold text-white mb-4">Task Details</h3>
-            <textarea 
-              value={todoInput} 
-              onChange={(e) => setTodoInput(e.target.value)} 
-              className="flex-1 w-full bg-slate-900 text-slate-300 px-4 py-3 rounded-lg mb-4 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-700 text-lg" 
-              placeholder="Write your task here..." 
-            />
-            <div className="flex justify-between gap-3 mt-auto">
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-700">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                {todoNodeType === 'flow' ? <GitBranch size={22} className="text-white" /> : <CheckSquare size={22} className="text-blue-400" />}
+                {editingTodoId ? 'Edit Item' : 'New Task / Flow'}
+              </h3>
               <button 
-                onClick={(e) => { openDeleteTodoModal(editingTodoId, e); }} 
-                className="px-4 py-2 text-red-400 hover:text-white hover:bg-red-600 rounded-lg transition-colors font-medium flex items-center gap-2"
+                type="button"
+                onClick={handleCancelEditTodo}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors"
               >
-                <Trash2 size={18} /> Delete
+                <X size={20} />
               </button>
+            </div>
+
+            {/* Task / Flow text input */}
+            <div className="mb-5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                {todoNodeType === 'flow' ? 'Flow Name / Description' : 'Task Details'}
+              </label>
+              <textarea 
+                value={todoInput} 
+                onChange={(e) => setTodoInput(e.target.value)} 
+                className="w-full bg-slate-900 text-slate-200 px-4 py-3 rounded-xl min-h-[120px] resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-700 text-base" 
+                placeholder={todoNodeType === 'flow' ? 'e.g. Flow 1, Morning Production, Marketing Funnel...' : 'e.g. October 19 Hayat Clinic Social Media Content Creator\nGraphic Design Morning - 8:30PM PH base (oct 19)[Done]'} 
+                autoFocus
+              />
+            </div>
+
+            {/* Flow vs Task Selection */}
+            <div className="mb-5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                Item Classification
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTodoNodeType('flow');
+                    if (todoShape === 'Square') setTodoShape('Circle');
+                  }}
+                  className={`p-3.5 rounded-xl border flex items-center gap-3 transition-all text-left ${
+                    todoNodeType === 'flow' 
+                      ? 'border-white bg-white/10 text-white shadow-lg shadow-white/5' 
+                      : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-slate-600 hover:text-slate-300'
+                  }`}
+                >
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${todoNodeType === 'flow' ? 'bg-white text-slate-900' : 'bg-slate-800 text-slate-400'}`}>
+                    <GitBranch size={18} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-sm">Flow</div>
+                    <div className="text-xs text-slate-400 opacity-80">Connector node (White border)</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTodoNodeType('task');
+                    if (todoShape === 'Circle') setTodoShape('Square');
+                  }}
+                  className={`p-3.5 rounded-xl border flex items-center gap-3 transition-all text-left ${
+                    todoNodeType === 'task' 
+                      ? 'border-blue-500 bg-blue-500/10 text-white shadow-lg shadow-blue-500/10' 
+                      : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-slate-600 hover:text-slate-300'
+                  }`}
+                >
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${todoNodeType === 'task' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                    <CheckSquare size={18} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-sm">Task</div>
+                    <div className="text-xs text-slate-400 opacity-80">Actionable item with checkbox (Blue border)</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Shape Selection */}
+            <div className="mb-5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                Canvas Shape
+              </label>
+              <div className="grid grid-cols-5 gap-2">
+                {[
+                  { id: 'Square', label: 'Square', icon: Square },
+                  { id: 'Circle', label: 'Circle', icon: Circle },
+                  { id: 'Triangle', label: 'Triangle', icon: Triangle },
+                  { id: 'Hexagon', label: 'Hexagon', icon: Hexagon },
+                  { id: 'Text', label: 'Text Only', icon: Type }
+                ].map((s) => {
+                  const Icon = s.icon;
+                  const isSelected = todoShape === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setTodoShape(s.id)}
+                      className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all ${
+                        isSelected 
+                          ? 'border-blue-500 bg-blue-500/15 text-blue-400 shadow-md' 
+                          : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-slate-600 hover:text-slate-200'
+                      }`}
+                    >
+                      <Icon size={20} />
+                      <span className="text-xs font-medium">{s.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Connect To Node Selection with Directional Flow Navigation */}
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  <Link2 size={14} className="text-slate-400" />
+                  Connect To Node (Parent)
+                </label>
+                {parentOfCurrentNav && currentNavNode?.id !== rootModalNode?.id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavParentId(parentOfCurrentNav.id);
+                      setTodoConnectTo(parentOfCurrentNav.id);
+                    }}
+                    className="text-xs text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 font-medium transition-colors"
+                    title={`Go back to ${parentOfCurrentNav.isRoot ? 'Root Project' : (parentOfCurrentNav.text || parentOfCurrentNav.type)}`}
+                  >
+                    <ArrowLeft size={13} /> Back direction
+                  </button>
+                )}
+              </div>
+
+              {/* Breadcrumb path for easy direction awareness */}
+              {navBreadcrumbs.length > 1 && (
+                <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-2 overflow-x-auto py-1 scrollbar-none">
+                  <span className="text-slate-500 font-medium text-[11px]">Level:</span>
+                  {navBreadcrumbs.map((bNode, idx) => {
+                    const isLast = idx === navBreadcrumbs.length - 1;
+                    return (
+                      <span key={bNode.id} className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNavParentId(bNode.id);
+                            setTodoConnectTo(bNode.id);
+                          }}
+                          className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                            isLast 
+                              ? 'bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30' 
+                              : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
+                          }`}
+                        >
+                          {bNode.isRoot ? '☆ Root' : bNode.nodeType === 'flow' ? `◇ ${bNode.text ? (bNode.text.length > 18 ? bNode.text.slice(0, 18) + '...' : bNode.text) : 'Flow'}` : `□ ${bNode.text ? (bNode.text.length > 18 ? bNode.text.slice(0, 18) + '...' : bNode.text) : 'Task'}`}
+                        </button>
+                        {!isLast && <span className="text-slate-600 text-[10px]">➔</span>}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              
+              <div className="relative">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 flex items-center justify-center">
+                  {(() => {
+                    const selected = activeModalNodesMap.get(todoConnectTo);
+                    if (!selected) return <Unlink size={16} className="text-slate-500" />;
+                    if (selected.isRoot) return <Star size={16} className="text-amber-400" />;
+                    if (selected.nodeType === 'flow') return <GitBranch size={16} className="text-slate-300" />;
+                    return <Square size={16} className="text-blue-400" />;
+                  })()}
+                </div>
+
+                <select
+                  value={todoConnectTo === '' ? '__DISCONNECTED__' : todoConnectTo}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '__BACK__') {
+                      if (parentOfCurrentNav) {
+                        setNavParentId(parentOfCurrentNav.id);
+                        setTodoConnectTo(parentOfCurrentNav.id);
+                      }
+                    } else if (val === '__DISCONNECTED__') {
+                      setTodoConnectTo('');
+                    } else {
+                      setTodoConnectTo(val);
+                      // Drill into the selected node to reveal its downstream flow/tasks
+                      if (val !== currentNavNode?.id) {
+                        setNavParentId(val);
+                      }
+                    }
+                  }}
+                  className="w-full bg-slate-900 text-white pl-10 pr-10 py-3 rounded-xl border border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm cursor-pointer appearance-none"
+                >
+                  {/* Back Direction Option */}
+                  {parentOfCurrentNav && currentNavNode?.id !== rootModalNode?.id && (
+                    <option value="__BACK__">
+                      ⬅ Back direction to: {parentOfCurrentNav.isRoot ? '☆ [Root Project]' : parentOfCurrentNav.nodeType === 'flow' ? '◇ [Flow]' : '□ [Task]'} {parentOfCurrentNav.text ? (parentOfCurrentNav.text.length > 30 ? parentOfCurrentNav.text.slice(0, 30) + '...' : parentOfCurrentNav.text) : parentOfCurrentNav.type}
+                    </option>
+                  )}
+
+                  {/* Connect directly to currentNavNode */}
+                  {currentNavNode && (
+                    <option value={currentNavNode.id}>
+                      ✓ Connect to: {currentNavNode.isRoot ? '☆ [Root Project]' : currentNavNode.nodeType === 'flow' ? '◇ [Flow]' : '□ [Task]'} {currentNavNode.text ? (currentNavNode.text.length > 35 ? currentNavNode.text.slice(0, 35) + '...' : currentNavNode.text) : currentNavNode.type}
+                    </option>
+                  )}
+
+                  {/* Disconnected Option */}
+                  <option value="__DISCONNECTED__">
+                    ○ Disconnected / Root Level
+                  </option>
+
+                  {/* Direct Downstream Nodes under this Flow/Node */}
+                  {navChildren.map(c => {
+                    const childSubItems = modalChildrenMap.get(c.id) || [];
+                    const hasSubItems = childSubItems.length > 0 || c.nodeType === 'flow';
+                    const cPrefix = c.nodeType === 'flow' ? '◇ [Flow]' : '□ [Task]';
+                    const cLabel = c.text 
+                      ? (c.text.length > 32 ? c.text.slice(0, 32) + '...' : c.text)
+                      : `${c.type} (${c.id.slice(-4)})`;
+                    const subLabel = hasSubItems ? ` (${childSubItems.length} items) ➔` : '';
+                    return (
+                      <option key={c.id} value={c.id}>
+                        ↳ {cPrefix} {cLabel}{subLabel}
+                      </option>
+                    );
+                  })}
+                </select>
+
+                <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                  <ChevronDown size={16} />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-slate-500 mt-1.5">
+                <span>
+                  {currentNavNode ? `Viewing flow under "${currentNavNode.isRoot ? (project.name || 'Root') : (currentNavNode.text || currentNavNode.type)}"` : 'Viewing root level'}
+                </span>
+                {navChildren.length > 0 && (
+                  <span className="text-slate-400 font-medium">
+                    {navChildren.length} downstream {navChildren.length === 1 ? 'branch' : 'branches'}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="flex items-center justify-between pt-4 border-t border-slate-700 mt-auto">
+              {editingTodoId ? (
+                <button 
+                  type="button"
+                  onClick={(e) => { openDeleteTodoModal(editingTodoId, e); }} 
+                  className="px-4 py-2.5 text-red-400 hover:text-white hover:bg-red-600 rounded-xl transition-colors font-medium flex items-center gap-2 text-sm"
+                >
+                  <Trash2 size={16} /> Delete
+                </button>
+              ) : <div />}
               <div className="flex gap-3">
-                <button onClick={handleCancelEditTodo} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors font-medium">Cancel</button>
-                <button onClick={handleSaveTodo} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg transition-colors flex items-center gap-2 font-medium"><Save size={18} /> Save Task</button>
+                <button 
+                  type="button"
+                  onClick={handleCancelEditTodo} 
+                  className="px-5 py-2.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-xl transition-colors font-medium text-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button"
+                  onClick={handleSaveTodo} 
+                  className="px-6 py-2.5 bg-blue-600 text-white hover:bg-blue-500 rounded-xl transition-colors flex items-center gap-2 font-medium text-sm shadow-lg shadow-blue-600/20"
+                >
+                  <Save size={16} /> {editingTodoId ? 'Save Changes' : 'Create & Connect'}
+                </button>
               </div>
             </div>
           </div>

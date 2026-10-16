@@ -28,13 +28,29 @@ const CanvasNode = memo(({
   const [hoveredEdge, setHoveredEdge] = useState(null);
 
   const isText = node.type === 'Text';
-  const isSquare = node.type === 'Square';
+  const isResizable = node.type === 'Square' || node.type === 'Circle';
   const w = node.width || 96;
   const h = node.height || 96;
-  const nodeStyle = isSquare ? { left: node.x, top: node.y, width: w, height: h } : { left: node.x, top: node.y };
+  const nodeStyle = isResizable ? { left: node.x, top: node.y, width: w, height: h } : { left: node.x, top: node.y };
   const nodeClass = isText 
     ? 'w-fit h-fit min-w-[6rem] min-h-[6rem] max-w-[16rem]' 
-    : isSquare ? '' : 'w-24 h-24';
+    : isResizable ? '' : 'w-24 h-24';
+
+  const getBorderClasses = () => {
+    if (node.isDeleted) {
+      return 'border-red-500 shadow-red-500/30';
+    }
+    if (node.isRoot) {
+      return 'border-slate-400 group-hover:border-slate-300';
+    }
+    if (node.nodeType === 'flow') {
+      return 'border-white group-hover:border-slate-200';
+    }
+    if (node.nodeType === 'task') {
+      return 'border-blue-500 group-hover:border-blue-400';
+    }
+    return 'border-slate-600 group-hover:border-blue-400';
+  };
 
   const handleMouseMove = useCallback((e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -58,7 +74,7 @@ const CanvasNode = memo(({
   return (
     <div
       style={nodeStyle}
-      className={`absolute group z-10 flex items-center justify-center p-4 ${nodeClass} ${isSelected ? 'ring-2 ring-blue-500 rounded-lg bg-blue-500/10' : ''}`}
+      className={`absolute group z-10 flex items-center justify-center p-4 ${nodeClass} ${isSelected ? 'ring-2 ring-blue-500 rounded-lg bg-blue-500/10' : ''} ${node.isDeleted ? 'opacity-85' : ''}`}
       onMouseDown={(e) => onStartDrag(e, node)}
       onMouseUp={(e) => onMouseUp(e, node)}
       onMouseMove={handleMouseMove}
@@ -66,9 +82,16 @@ const CanvasNode = memo(({
     >
       {/* Shape background */}
       <div 
-        className="absolute inset-0 bg-slate-800 border-2 border-slate-600 group-hover:border-blue-400 transition-colors shadow-lg"
+        className={`absolute inset-0 bg-slate-800 border-2 transition-colors shadow-lg ${getBorderClasses()}`}
         style={getShapeStyles(node.type)}
       />
+
+      {/* Deleted Indicator Tag */}
+      {node.isDeleted && (
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-red-600/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow pointer-events-none z-30 uppercase tracking-wider">
+          Deleted
+        </span>
+      )}
       
       {/* Text Input */}
       <div className="relative z-11 flex items-center justify-center w-full h-full pointer-events-none">
@@ -87,14 +110,14 @@ const CanvasNode = memo(({
               e.stopPropagation();
             }} 
             placeholder="Type..."
-            className={`col-start-1 row-start-1 resize-none overflow-hidden bg-transparent text-center text-sm font-medium text-white focus:outline-none placeholder-slate-500 break-words whitespace-pre-wrap px-1 min-w-0 ${isSquare ? 'w-full h-full' : ''}`}
+            className={`col-start-1 row-start-1 resize-none overflow-hidden bg-transparent text-center text-sm font-medium text-white focus:outline-none placeholder-slate-500 break-words whitespace-pre-wrap px-1 min-w-0 ${isResizable ? 'w-full h-full' : ''} ${node.isCompleted ? 'line-through text-slate-400' : ''}`}
             rows={1}
           />
         </div>
       </div>
 
-      {/* Resize Handle for Square */}
-      {isSquare && (
+      {/* Resize Handle for Square & Circle */}
+      {isResizable && !node.isDeleted && (
         <div 
           className="absolute bottom-1 right-1 w-5 h-5 cursor-se-resize opacity-0 group-hover:opacity-100 flex items-center justify-center z-30"
           onMouseDown={(e) => onStartResize(e, node)}
@@ -107,47 +130,53 @@ const CanvasNode = memo(({
         </div>
       )}
 
-      {/* Connect Buttons */}
-      <button 
-        className={`absolute -top-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-blue-500 transition-all z-20 cursor-crosshair shadow-lg ${hoveredEdge === 'top' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-        onMouseDown={(e) => onStartConnection(e, node, 'top')}
-        title="Drag to connect from top"
-      >
-        <Plus size={14} className="text-white" />
-      </button>
-      <button 
-        className={`absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-blue-500 transition-all z-20 cursor-crosshair shadow-lg ${hoveredEdge === 'bottom' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-        onMouseDown={(e) => onStartConnection(e, node, 'bottom')}
-        title="Drag to connect from bottom"
-      >
-        <Plus size={14} className="text-white" />
-      </button>
-      <button 
-        className={`absolute top-1/2 -left-3 -translate-y-1/2 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-blue-500 transition-all z-20 cursor-crosshair shadow-lg ${hoveredEdge === 'left' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-        onMouseDown={(e) => onStartConnection(e, node, 'left')}
-        title="Drag to connect from left"
-      >
-        <Plus size={14} className="text-white" />
-      </button>
-      <button 
-        className={`absolute top-1/2 -right-3 -translate-y-1/2 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-blue-500 transition-all z-20 cursor-crosshair shadow-lg ${hoveredEdge === 'right' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-        onMouseDown={(e) => onStartConnection(e, node, 'right')}
-        title="Drag to connect from right"
-      >
-        <Plus size={14} className="text-white" />
-      </button>
+      {/* Connect Buttons (only if not deleted) */}
+      {!node.isDeleted && (
+        <>
+          <button 
+            className={`absolute -top-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-blue-500 transition-all z-20 cursor-crosshair shadow-lg ${hoveredEdge === 'top' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            onMouseDown={(e) => onStartConnection(e, node, 'top')}
+            title="Drag to connect from top"
+          >
+            <Plus size={14} className="text-white" />
+          </button>
+          <button 
+            className={`absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-blue-500 transition-all z-20 cursor-crosshair shadow-lg ${hoveredEdge === 'bottom' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            onMouseDown={(e) => onStartConnection(e, node, 'bottom')}
+            title="Drag to connect from bottom"
+          >
+            <Plus size={14} className="text-white" />
+          </button>
+          <button 
+            className={`absolute top-1/2 -left-3 -translate-y-1/2 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-blue-500 transition-all z-20 cursor-crosshair shadow-lg ${hoveredEdge === 'left' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            onMouseDown={(e) => onStartConnection(e, node, 'left')}
+            title="Drag to connect from left"
+          >
+            <Plus size={14} className="text-white" />
+          </button>
+          <button 
+            className={`absolute top-1/2 -right-3 -translate-y-1/2 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-blue-500 transition-all z-20 cursor-crosshair shadow-lg ${hoveredEdge === 'right' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            onMouseDown={(e) => onStartConnection(e, node, 'right')}
+            title="Drag to connect from right"
+          >
+            <Plus size={14} className="text-white" />
+          </button>
+        </>
+      )}
 
-      {/* Delete Button */}
-      <button 
-        className={`absolute -top-3 -right-3 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-red-500 transition-all z-20 shadow-lg ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-        onMouseDown={(e) => {
-          e.stopPropagation();
-          onDelete(e, node.id, isSelected);
-        }}
-        title="Delete node"
-      >
-        <X size={12} className="text-white" />
-      </button>
+      {/* Delete Button (hidden for Root node and already deleted node) */}
+      {!node.isRoot && !node.isDeleted && (
+        <button 
+          className={`absolute -top-3 -right-3 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center hover:scale-110 hover:bg-red-500 transition-all z-20 shadow-lg ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            onDelete(e, node.id, isSelected);
+          }}
+          title="Delete node"
+        >
+          <X size={12} className="text-white" />
+        </button>
+      )}
     </div>
   );
 });
