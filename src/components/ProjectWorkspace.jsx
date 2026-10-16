@@ -29,7 +29,10 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Unlink,
-  Link2
+  Link2,
+  Folder,
+  FolderOpen,
+  Home
 } from 'lucide-react';
 import { Reorder } from 'framer-motion';
 import { getNotes, saveNotes, getCanvas, saveCanvas, getTodos, saveTodos, getTrash, saveTrash } from '../data/storage';
@@ -39,7 +42,7 @@ import CanvasNode from './CanvasNode';
 import CanvasConnection from './CanvasConnection';
 import SelectionBox from './SelectionBox';
 import SelectionBounds from './SelectionBounds';
-import NestedTodoItem from './NestedTodoItem';
+import TodoFolderItem from './TodoFolderItem';
 
 const ProjectWorkspace = ({ project, onBack }) => {
   if (!project) return null;
@@ -433,8 +436,13 @@ const ProjectWorkspace = ({ project, onBack }) => {
     return map;
   }, [todos]);
 
-  // Single active expanded container ID for accordion auto-close behavior
-  const [expandedNodeId, setExpandedNodeId] = useState(null);
+  // Folder navigation state: null = Root explorer, otherwise ID of the active folder node
+  const [currentFolderId, setCurrentFolderId] = useState(null);
+
+  // Active folder todo object
+  const currentFolderTodo = useMemo(() => {
+    return currentFolderId ? todosMap.get(currentFolderId) || null : null;
+  }, [currentFolderId, todosMap]);
 
   // Compute hierarchical tree of todos based on connections
   const todoTreeData = useMemo(() => {
@@ -486,48 +494,60 @@ const ProjectWorkspace = ({ project, onBack }) => {
     return { topLevelTodos, childrenByParent, parentOfTodo };
   }, [todos, connections, nodes]);
 
-  // Set of actively expanded node IDs: active node + all its direct ancestors
-  const activeExpandedSet = useMemo(() => {
-    const set = new Set();
-    if (!expandedNodeId) return set;
-    
-    let curr = expandedNodeId;
+  // Folder Breadcrumb path from Root down to currentFolderId
+  const folderBreadcrumb = useMemo(() => {
+    if (!currentFolderId) return [];
+    const path = [];
+    let currId = currentFolderId;
     const visited = new Set();
-    while (curr && !visited.has(curr)) {
-      visited.add(curr);
-      set.add(curr);
-      curr = todoTreeData.parentOfTodo.get(curr);
+    while (currId && !visited.has(currId)) {
+      visited.add(currId);
+      const item = todosMap.get(currId);
+      if (item) {
+        path.unshift(item);
+      }
+      currId = todoTreeData.parentOfTodo.get(currId);
     }
-    return set;
-  }, [expandedNodeId, todoTreeData]);
+    return path;
+  }, [currentFolderId, todosMap, todoTreeData]);
 
-  // Expanding another container auto-closes the previous container to avoid confusion
-  const handleToggleExpand = useCallback((nodeId, e) => {
-    if (e) e.stopPropagation();
-    setExpandedNodeId(prev => (prev === nodeId ? null : nodeId));
+  // Items to display in current folder (or root top-level items)
+  const currentFolderItems = useMemo(() => {
+    if (!currentFolderId) {
+      return todoTreeData.topLevelTodos;
+    }
+    return todoTreeData.childrenByParent.get(currentFolderId) || [];
+  }, [currentFolderId, todoTreeData]);
+
+  // Folder navigation actions
+  const handleOpenFolder = useCallback((folderId) => {
+    setCurrentFolderId(folderId);
+    setSelectedNodeIds([folderId]);
+    selectedNodeIdsRef.current = [folderId];
   }, []);
 
-  // All parent todo IDs that have connected sub-nodes
-  const allParentIds = useMemo(() => {
-    const set = new Set();
-    connections.forEach(c => {
-      if (todosMap.has(c.from)) {
-        set.add(c.from);
-      }
-    });
-    return set;
-  }, [connections, todosMap]);
-
-  const handleToggleExpandAll = useCallback(() => {
-    if (expandedNodeId !== null) {
-      setExpandedNodeId(null);
+  const handleGoUpFolder = useCallback(() => {
+    if (!currentFolderId) return;
+    const parentId = todoTreeData.parentOfTodo.get(currentFolderId);
+    if (!parentId || !todosMap.has(parentId)) {
+      setCurrentFolderId(null);
     } else {
-      const firstParent = todoTreeData.topLevelTodos.find(t => (todoTreeData.childrenByParent.get(t.id) || []).length > 0);
-      if (firstParent) {
-        setExpandedNodeId(firstParent.id);
-      }
+      setCurrentFolderId(parentId);
+      setSelectedNodeIds([parentId]);
+      selectedNodeIdsRef.current = [parentId];
     }
-  }, [expandedNodeId, todoTreeData]);
+  }, [currentFolderId, todoTreeData, todosMap]);
+
+  const handleGoToRoot = useCallback(() => {
+    setCurrentFolderId(null);
+  }, []);
+
+  // Gracefully fallback to root if the current folder node is deleted
+  useEffect(() => {
+    if (currentFolderId && !todosMap.has(currentFolderId)) {
+      setCurrentFolderId(null);
+    }
+  }, [currentFolderId, todosMap]);
 
   const handleSwitchTodoType = useCallback((todoId, nextType, e) => {
     if (e) e.stopPropagation();
@@ -551,8 +571,8 @@ const ProjectWorkspace = ({ project, onBack }) => {
     setActiveSidebarTab('todos');
     setIsTodoModalOpen(true);
     
-    // Auto-open this parent container
-    setExpandedNodeId(parentId);
+    // Direct view inside this folder
+    setCurrentFolderId(parentId);
   }, []);
 
   useEffect(() => { 
@@ -597,7 +617,12 @@ const ProjectWorkspace = ({ project, onBack }) => {
   const handleCreateTodo = useCallback(() => {
     const activeNodes = (nodesRef.current || []).filter(n => !n.isDeleted);
     const rootNode = activeNodes.find(n => n.isRoot);
-    const defaultParent = rootNode ? rootNode.id : (activeNodes[0]?.id || '');
+    
+    // Default connection target: if inside a folder, connect to current folder; otherwise connect to Root circle
+    let defaultParent = rootNode ? rootNode.id : (activeNodes[0]?.id || '');
+    if (currentFolderId && todosMap.has(currentFolderId)) {
+      defaultParent = currentFolderId;
+    }
 
     setEditingTodoId(null);
     setTodoInput('');
@@ -607,7 +632,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
     setNavParentId(defaultParent || null);
     setActiveSidebarTab('todos');
     setIsTodoModalOpen(true);
-  }, []);
+  }, [currentFolderId, todosMap]);
 
   const handleCancelEditTodo = useCallback(() => {
     setEditingTodoId(null);
@@ -700,7 +725,6 @@ const ProjectWorkspace = ({ project, onBack }) => {
           to: newId,
           toHandle: 'top'
         });
-        setExpandedNodeId(todoConnectTo);
       }
 
       const aligned = autoAlignWorkflow([...nodesRef.current, newNode], newConns);
@@ -2026,18 +2050,22 @@ const ProjectWorkspace = ({ project, onBack }) => {
             )}
             {activeSidebarTab === 'todos' && (
               <div className="flex items-center gap-1.5">
-                {allParentIds.size > 0 && (
+                {currentFolderId && (
                   <button 
                     type="button"
-                    onClick={handleToggleExpandAll} 
-                    className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors flex items-center gap-1 border border-slate-700/60 font-medium"
-                    title={expandedNodeId ? "Collapse current container" : "Expand a container"}
+                    onClick={handleGoToRoot} 
+                    className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors flex items-center gap-1 border border-slate-700/60 font-medium cursor-pointer"
+                    title="Back to root folder"
                   >
-                    <ChevronsUpDown size={13} />
-                    {expandedNodeId ? 'Collapse' : 'Expand'}
+                    <ArrowLeft size={13} />
+                    <span>Back</span>
                   </button>
                 )}
-                <button onClick={handleCreateTodo} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700 transition-colors" title="Create Task / Flow">
+                <button 
+                  onClick={handleCreateTodo} 
+                  className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700 transition-colors cursor-pointer" 
+                  title={currentFolderId ? "Create Task / Flow inside this folder" : "Create Task / Flow at Root"}
+                >
                   <Plus size={18} />
                 </button>
               </div>
@@ -2117,30 +2145,124 @@ const ProjectWorkspace = ({ project, onBack }) => {
             )}
             {activeSidebarTab === 'todos' && (
               <div>
-                {todos.length === 0 ? (
-                  <div className="text-center text-slate-500 mt-10">
-                    <p>No tasks yet.</p>
-                    <button onClick={handleCreateTodo} className="text-blue-400 hover:text-blue-300 text-sm mt-2 font-medium">Create your first task</button>
+                {/* Folder Navigation Bar (when inside a folder) */}
+                {currentFolderId ? (
+                  <div className="bg-slate-900 border border-slate-700/80 rounded-xl p-3 mb-3 shadow-md space-y-2.5">
+                    {/* Top bar: Back button + folder type badge + count */}
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        onClick={handleGoUpFolder}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition-colors border border-slate-700 cursor-pointer"
+                        title="Go up one level"
+                      >
+                        <ArrowLeft size={13} />
+                        <span>Back</span>
+                      </button>
+                      
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
+                          currentFolderTodo?.nodeType === 'flow' 
+                            ? 'bg-slate-700/80 text-white border-slate-500/60' 
+                            : 'bg-blue-500/15 text-blue-400 border border-blue-500/30'
+                        }`}>
+                          {currentFolderTodo?.nodeType === 'flow' ? '◇ Flow Folder' : '□ Task Folder'}
+                        </span>
+                        <span className="text-xs text-slate-400 font-mono">
+                          {currentFolderItems.length} {currentFolderItems.length === 1 ? 'item' : 'items'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Current Folder Title */}
+                    <div className="flex items-center gap-2 px-1">
+                      <FolderOpen size={16} className="text-blue-400 flex-shrink-0" />
+                      <h3 className="text-sm font-bold text-white truncate">
+                        {currentFolderTodo?.text || (currentFolderTodo?.nodeType === 'flow' ? 'Untitled Flow' : 'Untitled Task')}
+                      </h3>
+                    </div>
+
+                    {/* Breadcrumb Path */}
+                    <div className="flex items-center gap-1 text-xs text-slate-400 flex-wrap pt-1 border-t border-slate-800">
+                      <button
+                        onClick={handleGoToRoot}
+                        className="flex items-center gap-1 text-blue-400 hover:text-blue-300 font-medium px-1.5 py-0.5 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                      >
+                        <Home size={12} />
+                        <span>Root</span>
+                      </button>
+                      {folderBreadcrumb.map((crumb, idx) => {
+                        const isLast = idx === folderBreadcrumb.length - 1;
+                        return (
+                          <div key={crumb.id} className="flex items-center gap-1">
+                            <ChevronRight size={11} className="text-slate-600 flex-shrink-0" />
+                            <button
+                              onClick={() => handleOpenFolder(crumb.id)}
+                              disabled={isLast}
+                              className={`max-w-[130px] truncate px-1.5 py-0.5 rounded transition-colors text-xs ${
+                                isLast 
+                                  ? 'font-bold text-white bg-slate-800 cursor-default' 
+                                  : 'text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer'
+                              }`}
+                              title={crumb.text || (crumb.nodeType === 'flow' ? 'Flow' : 'Task')}
+                            >
+                              {crumb.text || (crumb.nodeType === 'flow' ? 'Flow' : 'Task')}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {todoTreeData.topLevelTodos.map(topTodo => {
-                      const childTodos = todoTreeData.childrenByParent.get(topTodo.id) || [];
+                  /* Root Explorer Header */
+                  <div className="flex items-center justify-between px-1 py-1.5 mb-2.5 text-xs text-slate-400 font-medium border-b border-slate-800">
+                    <div className="flex items-center gap-1.5 text-slate-300 font-semibold">
+                      <Folder size={14} className="text-blue-400" />
+                      <span>Root Explorer</span>
+                    </div>
+                    <span className="text-[11px] font-mono text-slate-500">
+                      {currentFolderItems.length} {currentFolderItems.length === 1 ? 'item' : 'items'}
+                    </span>
+                  </div>
+                )}
+
+                {/* Items List */}
+                {currentFolderItems.length === 0 ? (
+                  <div className="text-center py-10 px-4 rounded-xl border border-dashed border-slate-800 bg-slate-900/40 mt-2">
+                    <FolderOpen size={36} className="mx-auto text-slate-600 mb-2.5 opacity-60" />
+                    <p className="text-sm text-slate-300 font-semibold">
+                      {currentFolderId ? 'This folder is empty' : 'No tasks or flows yet'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1 mb-4">
+                      {currentFolderId 
+                        ? 'Create items here to connect them inside this container.' 
+                        : 'Get started by creating your first task or flow.'}
+                    </p>
+                    <button
+                      onClick={handleCreateTodo}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-colors cursor-pointer"
+                    >
+                      <Plus size={14} />
+                      {currentFolderId ? 'Create Item Inside' : 'Create First Item'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3 pb-6">
+                    {currentFolderItems.map(item => {
+                      const children = todoTreeData.childrenByParent.get(item.id) || [];
+                      const completedChildCount = children.filter(c => c.completed).length;
                       return (
-                        <NestedTodoItem
-                          key={topTodo.id}
-                          todo={topTodo}
-                          childTodos={childTodos}
-                          childrenByParent={todoTreeData.childrenByParent}
-                          expandedNodeIds={activeExpandedSet}
-                          onToggleExpand={handleToggleExpand}
+                        <TodoFolderItem
+                          key={item.id}
+                          todo={item}
+                          childCount={children.length}
+                          completedChildCount={completedChildCount}
+                          onOpenFolder={handleOpenFolder}
                           onToggleCompletion={toggleTodoCompletion}
                           onEdit={handleEditTodo}
                           onDelete={openDeleteTodoModal}
                           onSwitchType={handleSwitchTodoType}
                           onCreateSubTodo={handleCreateSubTodo}
-                          depth={0}
-                          visitedPath={new Set([topTodo.id])}
+                          isInsideFolder={currentFolderId !== null}
                         />
                       );
                     })}
