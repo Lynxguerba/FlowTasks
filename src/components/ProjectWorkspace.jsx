@@ -433,21 +433,8 @@ const ProjectWorkspace = ({ project, onBack }) => {
     return map;
   }, [todos]);
 
-  // Nested collapsible/expandable state for todos
-  const [expandedNodeIds, setExpandedNodeIds] = useState(new Set());
-
-  const handleToggleExpand = useCallback((nodeId, e) => {
-    if (e) e.stopPropagation();
-    setExpandedNodeIds(prev => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      return next;
-    });
-  }, []);
+  // Single active expanded container ID for accordion auto-close behavior
+  const [expandedNodeId, setExpandedNodeId] = useState(null);
 
   // Compute hierarchical tree of todos based on connections
   const todoTreeData = useMemo(() => {
@@ -496,8 +483,29 @@ const ProjectWorkspace = ({ project, onBack }) => {
       }
     });
 
-    return { topLevelTodos, childrenByParent };
+    return { topLevelTodos, childrenByParent, parentOfTodo };
   }, [todos, connections, nodes]);
+
+  // Set of actively expanded node IDs: active node + all its direct ancestors
+  const activeExpandedSet = useMemo(() => {
+    const set = new Set();
+    if (!expandedNodeId) return set;
+    
+    let curr = expandedNodeId;
+    const visited = new Set();
+    while (curr && !visited.has(curr)) {
+      visited.add(curr);
+      set.add(curr);
+      curr = todoTreeData.parentOfTodo.get(curr);
+    }
+    return set;
+  }, [expandedNodeId, todoTreeData]);
+
+  // Expanding another container auto-closes the previous container to avoid confusion
+  const handleToggleExpand = useCallback((nodeId, e) => {
+    if (e) e.stopPropagation();
+    setExpandedNodeId(prev => (prev === nodeId ? null : nodeId));
+  }, []);
 
   // All parent todo IDs that have connected sub-nodes
   const allParentIds = useMemo(() => {
@@ -510,15 +518,16 @@ const ProjectWorkspace = ({ project, onBack }) => {
     return set;
   }, [connections, todosMap]);
 
-  const allExpanded = allParentIds.size > 0 && Array.from(allParentIds).every(id => expandedNodeIds.has(id));
-
   const handleToggleExpandAll = useCallback(() => {
-    if (allExpanded) {
-      setExpandedNodeIds(new Set());
+    if (expandedNodeId !== null) {
+      setExpandedNodeId(null);
     } else {
-      setExpandedNodeIds(new Set(allParentIds));
+      const firstParent = todoTreeData.topLevelTodos.find(t => (todoTreeData.childrenByParent.get(t.id) || []).length > 0);
+      if (firstParent) {
+        setExpandedNodeId(firstParent.id);
+      }
     }
-  }, [allExpanded, allParentIds]);
+  }, [expandedNodeId, todoTreeData]);
 
   const handleSwitchTodoType = useCallback((todoId, nextType, e) => {
     if (e) e.stopPropagation();
@@ -542,8 +551,8 @@ const ProjectWorkspace = ({ project, onBack }) => {
     setActiveSidebarTab('todos');
     setIsTodoModalOpen(true);
     
-    // Automatically expand the parent node so new child is visible
-    setExpandedNodeIds(prev => new Set(prev).add(parentId));
+    // Auto-open this parent container
+    setExpandedNodeId(parentId);
   }, []);
 
   useEffect(() => { 
@@ -691,7 +700,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
           to: newId,
           toHandle: 'top'
         });
-        setExpandedNodeIds(prev => new Set(prev).add(todoConnectTo));
+        setExpandedNodeId(todoConnectTo);
       }
 
       const aligned = autoAlignWorkflow([...nodesRef.current, newNode], newConns);
@@ -2022,10 +2031,10 @@ const ProjectWorkspace = ({ project, onBack }) => {
                     type="button"
                     onClick={handleToggleExpandAll} 
                     className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors flex items-center gap-1 border border-slate-700/60 font-medium"
-                    title={allExpanded ? "Collapse all containers" : "Expand all containers"}
+                    title={expandedNodeId ? "Collapse current container" : "Expand a container"}
                   >
                     <ChevronsUpDown size={13} />
-                    {allExpanded ? 'Collapse' : 'Expand'}
+                    {expandedNodeId ? 'Collapse' : 'Expand'}
                   </button>
                 )}
                 <button onClick={handleCreateTodo} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700 transition-colors" title="Create Task / Flow">
@@ -2123,7 +2132,7 @@ const ProjectWorkspace = ({ project, onBack }) => {
                           todo={topTodo}
                           childTodos={childTodos}
                           childrenByParent={todoTreeData.childrenByParent}
-                          expandedNodeIds={expandedNodeIds}
+                          expandedNodeIds={activeExpandedSet}
                           onToggleExpand={handleToggleExpand}
                           onToggleCompletion={toggleTodoCompletion}
                           onEdit={handleEditTodo}

@@ -7,6 +7,7 @@ import {
   Trash2, 
   Plus 
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const NestedTodoItem = memo(({
   todo,
@@ -29,17 +30,35 @@ const NestedTodoItem = memo(({
   // Sub-task progress
   const completedCount = hasChildren ? childTodos.filter(c => c.completed).length : 0;
 
+  const getContainerBorder = () => {
+    if (isExpanded) {
+      if (depth > 0) {
+        return 'border-white ring-2 ring-white/40 shadow-lg shadow-white/15 bg-slate-900';
+      }
+      return 'border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/15 bg-slate-900';
+    }
+    // Child container nodes - highlighted with white border
+    if (depth > 0) {
+      if (todo.completed) {
+        return 'border-white/70 bg-slate-900/60 opacity-85 hover:border-white ring-1 ring-white/20';
+      }
+      return 'border-white ring-1 ring-white/30 shadow-md shadow-white/10 bg-slate-900 hover:border-white';
+    }
+    if (todo.completed) {
+      return 'border-slate-800 bg-slate-900/40 opacity-80';
+    }
+    if (isFlow) {
+      return 'border-slate-700/90 hover:border-slate-500 bg-slate-900/95 shadow-sm shadow-slate-950/40';
+    }
+    return 'border-slate-800 hover:border-blue-500/50 bg-slate-900/85 shadow-sm';
+  };
+
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col w-full">
+      {/* Todo Card Container - Constant full width for parent and children */}
       <div 
         onClick={(e) => onEdit(todo, e)}
-        className={`rounded-xl border transition-all cursor-pointer group/todo relative flex flex-col ${
-          todo.completed 
-            ? 'border-slate-800 bg-slate-900/40 opacity-80' 
-            : isFlow 
-              ? 'border-slate-700/90 hover:border-slate-500 bg-slate-900/95 shadow-sm shadow-slate-950/40' 
-              : 'border-slate-800 hover:border-blue-500/50 bg-slate-900/85 shadow-sm'
-        }`}
+        className={`w-full rounded-xl border transition-all cursor-pointer group/todo relative flex flex-col ${getContainerBorder()}`}
       >
         <div className="p-3 flex items-start gap-2">
           {/* Expand/Collapse Chevron (if has children) */}
@@ -95,6 +114,13 @@ const NestedTodoItem = memo(({
               >
                 {isFlow ? '◇ Flow ⇄' : '□ Task ⇄'}
               </button>
+
+              {/* Sub-node hierarchy indicator when nested */}
+              {depth > 0 && (
+                <span className="text-[10px] font-medium text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-600/60">
+                  ↳ Sub-node
+                </span>
+              )}
               
               {todo.shape && (
                 <span className="text-[10px] text-slate-500">
@@ -108,7 +134,11 @@ const NestedTodoItem = memo(({
                   type="button"
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => onToggleExpand(todo.id, e)}
-                  className="text-[10px] bg-slate-800 text-slate-300 hover:text-white border border-slate-700 px-2 py-0.5 rounded-full font-medium transition-colors"
+                  className={`text-[10px] border px-2 py-0.5 rounded-full font-medium transition-colors ${
+                    isExpanded 
+                      ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' 
+                      : 'bg-slate-800 text-slate-300 hover:text-white border-slate-700'
+                  }`}
                   title={isExpanded ? "Click to collapse" : "Click to expand"}
                 >
                   {childTodos.length} {childTodos.length === 1 ? 'sub-node' : 'sub-nodes'}
@@ -152,39 +182,75 @@ const NestedTodoItem = memo(({
         </div>
       </div>
 
-      {/* Collapsible / Expandable Sub-nodes container */}
-      {isExpanded && hasChildren && (
-        <div className="ml-3 pl-2.5 border-l-2 border-slate-700/60 space-y-2 mt-2 mb-1">
-          {childTodos.map(child => {
-            if (visitedPath.has(child.id)) {
+      {/* Animated Collapsible Sub-nodes container - Same container size for all items */}
+      <AnimatePresence initial={false}>
+        {isExpanded && hasChildren && (
+          <motion.div
+            key={`sub-${todo.id}`}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ 
+              opacity: 1, 
+              height: 'auto',
+              transition: {
+                height: { duration: 0.28, ease: [0.04, 0.62, 0.23, 0.98] },
+                opacity: { duration: 0.2, delay: 0.05 }
+              }
+            }}
+            exit={{ 
+              opacity: 0, 
+              height: 0,
+              transition: {
+                height: { duration: 0.22, ease: [0.04, 0.62, 0.23, 0.98] },
+                opacity: { duration: 0.15 }
+              }
+            }}
+            className="overflow-hidden w-full space-y-2 mt-2"
+          >
+            {/* Header banner explaining connection relationship */}
+            <div className="flex items-center justify-between px-2.5 py-1 text-[11px] font-medium text-slate-400 bg-slate-800/70 rounded-lg border border-slate-700/50 w-full">
+              <div className="flex items-center gap-1.5 truncate">
+                <GitBranch size={12} className="text-blue-400 flex-shrink-0" />
+                <span className="truncate">
+                  Connected under <span className="text-slate-200 font-semibold">{todo.text ? (todo.text.length > 20 ? todo.text.slice(0, 20) + '...' : todo.text) : (isFlow ? 'Flow' : 'Task')}</span>
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-400 flex-shrink-0 font-mono">
+                {childTodos.length} {childTodos.length === 1 ? 'item' : 'items'}
+              </span>
+            </div>
+
+            {/* Child items with identical full container width */}
+            {childTodos.map(child => {
+              if (visitedPath.has(child.id)) {
+                return (
+                  <div key={child.id} className="text-xs text-amber-500 italic py-1 px-2">
+                    [Circular connection to {child.text || child.id}]
+                  </div>
+                );
+              }
+              const nextVisited = new Set(visitedPath).add(child.id);
+              const grandChildren = childrenByParent.get(child.id) || [];
               return (
-                <div key={child.id} className="text-xs text-amber-500 italic py-1">
-                  [Circular connection to {child.text || child.id}]
-                </div>
+                <NestedTodoItem
+                  key={child.id}
+                  todo={child}
+                  childTodos={grandChildren}
+                  childrenByParent={childrenByParent}
+                  expandedNodeIds={expandedNodeIds}
+                  onToggleExpand={onToggleExpand}
+                  onToggleCompletion={onToggleCompletion}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  onSwitchType={onSwitchType}
+                  onCreateSubTodo={onCreateSubTodo}
+                  depth={depth + 1}
+                  visitedPath={nextVisited}
+                />
               );
-            }
-            const nextVisited = new Set(visitedPath).add(child.id);
-            const grandChildren = childrenByParent.get(child.id) || [];
-            return (
-              <NestedTodoItem
-                key={child.id}
-                todo={child}
-                childTodos={grandChildren}
-                childrenByParent={childrenByParent}
-                expandedNodeIds={expandedNodeIds}
-                onToggleExpand={onToggleExpand}
-                onToggleCompletion={onToggleCompletion}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                onSwitchType={onSwitchType}
-                onCreateSubTodo={onCreateSubTodo}
-                depth={depth + 1}
-                visitedPath={nextVisited}
-              />
-            );
-          })}
-        </div>
-      )}
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 });
